@@ -5,6 +5,7 @@
  * Theme switcher and account/logout live in the nav footer.
  */
 
+import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { useAuth } from "../features/auth";
 import { UpdateBanner } from "../features/updater";
@@ -95,8 +96,17 @@ export function AppShell({
   route: string;
   children: ReactNode;
 }) {
+  const fullBleed = isFullBleedRoute(route);
+
+  // Player / room: transparent WebView chrome so libmpv video shows behind.
+  useEffect(() => {
+    const body = document.body;
+    body.classList.toggle("player-chrome", fullBleed);
+    return () => body.classList.remove("player-chrome");
+  }, [fullBleed]);
+
   // Full-bleed chrome: player / room (and any future immersive surface).
-  if (isFullBleedRoute(route)) {
+  if (fullBleed) {
     return <div className="app-fullbleed">{children}</div>;
   }
 

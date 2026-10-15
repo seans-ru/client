@@ -34,7 +34,14 @@ export type UsePlayerState = {
   snapshot: PlayerSnapshot;
   error: string | null;
   /** Fetch + open a presigned URL (call after `fetchFileUrl`). */
-  start: (url: string, options?: { startAt?: number | null }) => Promise<void>;
+  start: (
+    url: string,
+    options?: {
+      startAt?: number | null;
+      externalAudioUrls?: string[];
+      maxSeekableSec?: number | null;
+    },
+  ) => Promise<void>;
   /** Force the error phase (API failure before `start`). */
   fail: (message: string) => void;
   play: () => Promise<void>;
@@ -61,15 +68,38 @@ export function usePlayer(): UsePlayerState {
   const [snapshot, setSnapshot] = useState<PlayerSnapshot>(DEFAULT_SNAPSHOT);
   const [error, setError] = useState<string | null>(null);
   const [retryToken, setRetryToken] = useState(0);
-  const lastUrlRef = useRef<{ url: string; startAt: number | null } | null>(null);
+  const lastUrlRef = useRef<{
+    url: string;
+    startAt: number | null;
+    externalAudioUrls?: string[];
+    maxSeekableSec?: number | null;
+  } | null>(null);
 
-  const start = useCallback(async (url: string, options?: { startAt?: number | null }) => {
-    lastUrlRef.current = { url, startAt: options?.startAt ?? null };
+  const start = useCallback(async (
+    url: string,
+    options?: {
+      startAt?: number | null;
+      externalAudioUrls?: string[];
+      maxSeekableSec?: number | null;
+    },
+  ) => {
+    lastUrlRef.current = {
+      url,
+      startAt: options?.startAt ?? null,
+      externalAudioUrls: options?.externalAudioUrls,
+      maxSeekableSec: options?.maxSeekableSec,
+    };
     setPhase("loading");
     setError(null);
     setSnapshot(DEFAULT_SNAPSHOT);
     try {
-      await openPlayerUrl(url, { startAt: options?.startAt ?? null });
+      await openPlayerUrl(url, {
+        startAt: options?.startAt ?? null,
+        externalAudioUrls: options?.externalAudioUrls ?? [],
+        maxSeekableSec: options?.maxSeekableSec ?? null,
+      });
+      // Re-fit the mpv child HWND now that the player surface is mounted.
+      void playerSyncSize().catch(() => {});
       // Pull the post-open snapshot (covers errors emitted before listen attaches).
       const state = await playerGetState().catch(() => null);
       if (state) {
@@ -138,7 +168,11 @@ export function usePlayer(): UsePlayerState {
     if (retryToken === 0) return;
     const last = lastUrlRef.current;
     if (last) {
-      void start(last.url, { startAt: last.startAt });
+      void start(last.url, {
+        startAt: last.startAt,
+        externalAudioUrls: last.externalAudioUrls,
+        maxSeekableSec: last.maxSeekableSec,
+      });
     }
   }, [retryToken, start]);
 

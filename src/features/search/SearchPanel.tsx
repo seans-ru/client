@@ -3,7 +3,13 @@
  * Clicking a result navigates to `#/media/{id}`.
  */
 
-import { PosterCard, Input, Spinner, EmptyState, ErrorState } from "../../design/primitives";
+import {
+  PosterCard,
+  JacredAttribution,
+  Spinner,
+  EmptyState,
+  ErrorState,
+} from "../../design/primitives";
 import { ROUTES } from "../../lib/routeResolver";
 import type { MediaSearchResult } from "../../api/types";
 import { useMediaSearch } from "./useMediaSearch";
@@ -21,15 +27,25 @@ export function SearchPanel() {
 
   return (
     <div className="search-panel">
-      <Input
-        label="Поиск"
-        type="search"
-        placeholder="Название фильма или сериала…"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        hint={`Введите минимум ${SEARCH_MIN_QUERY_LENGTH} символа, чтобы начать поиск.`}
-        autoComplete="off"
-      />
+      <label className="input-field" htmlFor="catalog-search">
+        <span className="input-label">Поиск</span>
+        <div className="search-input-row">
+          <input
+            id="catalog-search"
+            className="input"
+            type="search"
+            placeholder="Название фильма или сериала…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            autoComplete="off"
+            aria-describedby="catalog-search-hint"
+          />
+          <JacredAttribution />
+        </div>
+        <span className="input-hint" id="catalog-search-hint">
+          {`Введите минимум ${SEARCH_MIN_QUERY_LENGTH} символа, чтобы начать поиск.`}
+        </span>
+      </label>
 
       {status === "loading" ? (
         <Spinner label="Поиск…" />

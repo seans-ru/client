@@ -10,6 +10,15 @@
     "core:window:allow-set-title",
     "deep-link:default",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "http:default",
+    {
+      "identifier": "http:allow-fetch",
+      "allow": [
+        { "url": "https://api.seans.tedeshi.ru/**" },
+        { "url": "https://api.theintrodb.org/**" },
+        { "url": "https://seans.tedeshi.ru/**" }
+      ]
+    }
   ]
 }

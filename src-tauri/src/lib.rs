@@ -1,5 +1,6 @@
 mod commands;
 mod player;
+mod progressive;
 
 use tauri::{Emitter, Manager};
 
@@ -36,6 +37,7 @@ pub fn run() {
         // M11: updater + process relaunch (JS drives check/download; relaunch on demand).
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_http::init())
         .setup(|app| {
             #[cfg(desktop)]
             {
@@ -75,6 +77,11 @@ pub fn run() {
             player::player_get_state,
             player::player_destroy,
             player::player_sync_size,
+            player::player_set_max_seekable,
+            progressive::commands::progressive_start,
+            progressive::commands::progressive_update,
+            progressive::commands::progressive_stop,
+            progressive::commands::progressive_max_seekable,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Seans")

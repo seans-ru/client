@@ -24,6 +24,7 @@ import {
   filterReadyFiles,
   formatEpisodeLabel,
   formatLibraryStatus,
+  canOfferPlay,
   isFileReady,
 } from "./libraryHelpers";
 
@@ -46,6 +47,7 @@ function LibraryFileRow({
 }) {
   const ready = isFileReady(file);
   const episode = formatEpisodeLabel(file.season, file.episode);
+  const offerPlay = canOfferPlay(file);
   return (
     <li className="library-file">
       <div className="library-file-main">
@@ -60,19 +62,35 @@ function LibraryFileRow({
           <span>{formatBytes(file.size_bytes)}</span>
         </div>
       </div>
-      {ready ? (
+      {offerPlay ? (
         <div className="library-file-actions">
-          <a className="btn btn-primary btn-sm" href={ROUTES.player(file.id)}>
-            Смотреть
-          </a>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={creatingRoom}
-            onClick={() => onCreateRoom(file.id)}
-          >
-            {creatingRoom ? "Создание…" : "Создать комнату"}
-          </Button>
+          {ready ? (
+            <a className="btn btn-primary btn-sm" href={ROUTES.player(file.id)}>
+              Смотреть
+            </a>
+          ) : (
+            <a
+              className="btn btn-primary btn-sm"
+              href={ROUTES.player(file.id)}
+              title="Можно смотреть уже сейчас — до конца файла"
+            >
+              Смотреть · загружается
+            </a>
+          )}
+          {ready ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={creatingRoom}
+              onClick={() => onCreateRoom(file.id)}
+            >
+              {creatingRoom ? "Создание…" : "Создать комнату"}
+            </Button>
+          ) : (
+            <Button variant="secondary" size="sm" disabled title="Комната после полной загрузки">
+              Создать комнату
+            </Button>
+          )}
         </div>
       ) : null}
       {roomError ? (
@@ -192,6 +210,12 @@ export function LibraryList({
     void (async () => {
       try {
         const room = await createRoom(fileId);
+        // Host fallback when GET /api/rooms/{code} omits task_file_id.
+        try {
+          sessionStorage.setItem(`seans.room.file.${room.code}`, String(fileId));
+        } catch {
+          // ignore
+        }
         navigate(ROUTES.room(room.code));
       } catch (cause) {
         setRoomErrorFileId(fileId);

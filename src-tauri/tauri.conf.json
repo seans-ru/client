@@ -48,7 +48,7 @@
         "schemes": ["seans"]
       }
     },
-    "single-instance": {},
+    "single-instance": null,
     "updater": {
       "endpoints": [
         "https://seans.tedeshi.ru/updates/{{target}}/{{current_version}}"

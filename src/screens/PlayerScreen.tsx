@@ -1,11 +1,27 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchFileUrl } from "../api/endpoints";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { fetchFileUrl, fetchLibrary } from "../api/endpoints";
+import type { ApiId } from "../api/types";
+import type { PlaybackEpisode } from "../api/playback";
 import {
   consumeStartAt,
   PlayerSurface,
   usePlayer,
 } from "../features/player";
 import type { UsePlayerState } from "../features/player";
+import {
+  isExternalAudioTrack,
+} from "../features/player/audioTrackHelpers";
+import {
+  playerSetMaxSeekable,
+  progressiveStart,
+  progressiveStop,
+  progressiveUpdate,
+} from "../features/player/progressiveApi";
+import {
+  shouldAutoResumeAfterGrowth,
+  shouldPauseAtSeekEdge,
+} from "../features/player/progressiveHelpers";
+import { usePlayback } from "../features/player/usePlayback";
 import { fetchResumePosition, useHistoryProgress } from "../features/history";
 import { useTheIntroDb } from "../features/theintrodb";
 import "../features/player/player.css";
@@ -25,19 +41,46 @@ export type RoomTransport = {
   ) => Promise<void>;
 };
 
+/** Resolve media id + season/episode for a task file id via the library. */
+async function resolveFileMedia(
+  fileId: string,
+): Promise<{
+  mediaId: ApiId;
+  season: number | null;
+  episode: number | null;
+  hasPrimaryVideo: boolean;
+} | null> {
+  const items = await fetchLibrary();
+  for (const item of items) {
+    for (const file of item.files) {
+      if (String(file.id) === String(fileId)) {
+        return {
+          mediaId: item.media_item.id,
+          season: file.season ?? null,
+          episode: file.episode ?? null,
+          // Library rows with a prepared file count as having primary video.
+          hasPrimaryVideo: true,
+        };
+      }
+    }
+  }
+  return null;
+}
+
 /**
- * Player screen (M7 + M8 + M9). Full-bleed via `isFullBleedRoute` (no left nav).
+ * Player screen (M7 + M8 + M9 + progressive). Full-bleed via
+ * `isFullBleedRoute` (no left nav).
  *
- * Flow: `fetchFileUrl(fileId)` → `player_open(url)` → in-process libmpv.
- * Resume (M9): explicit `startAt` (openPlayer stash / prop) wins; otherwise
- * GET /api/history and seek to `position_sec` unless completed. Room mode
- * (M10) sets `roomMode` — resume and local progress tracking are skipped
- * there because host sync owns the position.
- * Progress (M9): player ticks → throttled PUT /api/history; force-save on
- * pause / seek / unmount.
- * TheIntroDB (M8) loads segments for the file's media; off when tmdb_id is null.
- * Rooms (M10): `onTransport` reports local play/pause/seek (host broadcast) and
- * `transportRef` exposes position/apply for heartbeats + guest remote control.
+ * Flow:
+ * 1. Resolve media id for `fileId`, then `GET /api/media/{id}/playback`.
+ * 2. `stream.complete` → VOD (`fetchFileUrl` + libmpv).
+ *    `stream.ready && !complete` → progressive (local range source).
+ * 3. Seek is limited to `max_seekable_bytes` (UI + Rust transport clamp).
+ * 4. Dual progress + grey zone from the playback poll (5–7 s).
+ * 5. Audio tracks from `audio_tracks[]` (flags → Russian labels), preference
+ *    saved per media/episode.
+ * 6. Series: episode picker; Play hidden when `has_primary_video` is false.
+ * 7. Resume (M9) + history progress; room mode skips both (host sync owns it).
  */
 export function PlayerScreen({
   fileId,
@@ -59,6 +102,13 @@ export function PlayerScreen({
   const [openToken, setOpenToken] = useState(0);
   const lastFileRef = useRef<string | null>(null);
   const intro = useTheIntroDb(fileId);
+  const [mediaId, setMediaId] = useState<ApiId | null>(null);
+  const [blockedToastToken, setBlockedToastToken] = useState(0);
+  const [waitingAtEdge, setWaitingAtEdge] = useState(false);
+  const waitingAtEdgeRef = useRef(false);
+  const prevLimitRef = useRef<ReturnType<typeof usePlayback>["limit"] | null>(
+    null,
+  );
 
   // Consume a resume position once per file id (clean M9 hook).
   const resumeAt = useRef<number | null>(null);
@@ -66,6 +116,42 @@ export function PlayerScreen({
     lastFileRef.current = fileId;
     resumeAt.current = startAt ?? consumeStartAt();
   }
+
+  // Resolve media id (playback endpoint key). TheIntroDB context may already
+  // have it; fall back to a direct library lookup.
+  useEffect(() => {
+    let cancelled = false;
+    if (intro.context?.mediaId != null) {
+      setMediaId(intro.context.mediaId);
+      return;
+    }
+    void (async () => {
+      try {
+        const ctx = await resolveFileMedia(fileId);
+        if (cancelled) return;
+        setMediaId(ctx?.mediaId ?? null);
+      } catch {
+        if (!cancelled) setMediaId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fileId, intro.context?.mediaId]);
+
+  const playbackState = usePlayback(mediaId, fileId, { enabled: !roomMode });
+  const {
+    mode,
+    limit,
+    progress,
+    playback,
+    audioOptions,
+    selectedAudio,
+    selectedAudioId,
+    seasonGroups,
+    canPlay,
+    selectAudio,
+  } = playbackState;
 
   const historyProgress = useHistoryProgress({
     taskFileId: fileId,
@@ -83,6 +169,10 @@ export function PlayerScreen({
   snapshotRef.current = player.snapshot;
   const playerRef = useRef(player);
   playerRef.current = player;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const limitRef = useRef(limit);
+  limitRef.current = limit;
 
   useEffect(() => {
     if (!transportRef) return;
@@ -112,6 +202,87 @@ export function PlayerScreen({
     };
   }, [transportRef]);
 
+  const onBlockedSeek = useCallback(() => {
+    setBlockedToastToken((t) => t + 1);
+  }, []);
+
+  /** Apply the preferred / selected playback audio track to mpv. */
+  const applyAudioTrack = useCallback(
+    (trackId?: string | number | null) => {
+      const options = playbackState.audioOptions;
+      if (!options || options.length === 0) return;
+      const key = trackId == null ? null : String(trackId);
+      const option =
+        options.find((o) => String(o.track.id) === key) ??
+        options.find((o) => String(o.track.id) === selectedAudioId) ??
+        options[0];
+      if (!option) return;
+      const track = option.track;
+      if (track.embedded !== false) {
+        const index = track.track_index;
+        void playerRef.current.setAudioTrack(
+          typeof index === "number" && index > 0 ? index : 0,
+        );
+      }
+      // External (ac3/m4a) tracks are attached at open time via audio-files.
+    },
+    [playbackState.audioOptions, selectedAudioId],
+  );
+
+  // Push seek ceiling to the Rust transport whenever it changes.
+  useEffect(() => {
+    if (roomMode) return;
+    void playerSetMaxSeekable(
+      mode === "vod" ? null : (limit.maxSeekableSec ?? null),
+    ).catch(() => {});
+  }, [mode, limit.maxSeekableSec, roomMode]);
+
+  // Pause at the contiguous-prefix edge; auto-resume when the prefix grows.
+  // Never scrolls the user backwards on its own.
+  useEffect(() => {
+    if (roomMode || mode !== "progressive") {
+      setWaitingAtEdge(false);
+      waitingAtEdgeRef.current = false;
+      return;
+    }
+    const { position, pause, duration } = player.snapshot;
+    const atEdge = shouldPauseAtSeekEdge(position, limit, mode);
+    if (atEdge && !pause && duration > 0) {
+      void player.pause();
+      setWaitingAtEdge(true);
+      waitingAtEdgeRef.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player.snapshot.position, player.snapshot.pause, mode, limit, roomMode]);
+
+  useEffect(() => {
+    if (roomMode) return;
+    const grew = shouldAutoResumeAfterGrowth(prevLimitRef.current, limit, {
+      mode,
+      waitingAtEdge: waitingAtEdgeRef.current,
+    });
+    prevLimitRef.current = limit;
+    if (grew && waitingAtEdgeRef.current) {
+      void player.play();
+      setWaitingAtEdge(false);
+      waitingAtEdgeRef.current = false;
+    }
+  }, [limit, mode, player, roomMode]);
+
+  // complete → seamless VOD switch (keep position, no user scroll).
+  const openedAsProgressiveRef = useRef(false);
+  useEffect(() => {
+    if (roomMode) return;
+    if (mode !== "vod" || !playback?.stream.complete) return;
+    if (!openedAsProgressiveRef.current) return;
+    openedAsProgressiveRef.current = false;
+    void progressiveStop().catch(() => {});
+    void playerSetMaxSeekable(null).catch(() => {});
+    const position = snapshotRef.current.position;
+    setOpenToken((t) => t + 1);
+    resumeAt.current = position;
+  }, [mode, playback?.stream.complete, roomMode, player]);
+
   const playerWithHistory = useMemo<UsePlayerState>(() => {
     return {
       ...player,
@@ -132,6 +303,15 @@ export function PlayerScreen({
         );
       },
       seek: async (seconds: number, opts?: { personal?: boolean }) => {
+        const decisionLimit = limitRef.current;
+        const modeNow = modeRef.current;
+        // Transport guard: never send a seek past max_seekable_bytes.
+        if (modeNow === "progressive" && decisionLimit.maxSeekableSec != null) {
+          if (seconds > decisionLimit.maxSeekableSec + 1e-6) {
+            setBlockedToastToken((t) => t + 1);
+            return;
+          }
+        }
         await player.seek(seconds);
         progressRef.current.flush({
           positionSec: seconds,
@@ -159,22 +339,82 @@ export function PlayerScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [position, duration, pause]);
 
+  // Open / reopen the media source (VOD URL or progressive range server).
+  const playbackStatus = playbackState.status;
+  const canPlayRef = useRef(canPlay);
+  canPlayRef.current = canPlay;
   useEffect(() => {
+    // Wait until playback metadata is ready when we expect progressive.
+    if (!roomMode && mediaId != null && playbackStatus === "loading") {
+      return;
+    }
+
     const controller = new AbortController();
     let cancelled = false;
 
     void (async () => {
       try {
-        const [file, historyStart] = await Promise.all([
-          fetchFileUrl(fileId, controller.signal),
-          // Explicit startAt (prop / openPlayer) wins; room mode skips resume.
-          resumeAt.current != null || roomMode
-            ? Promise.resolve(null)
-            : fetchResumePosition(fileId, controller.signal),
-        ]);
+        const from = resumeAt.current;
+
+        // Room mode / missing playback: classic presigned VOD URL.
+        if (roomMode || !playback || mediaId == null) {
+          const [file, historyStart] = await Promise.all([
+            fetchFileUrl(fileId, controller.signal),
+            from != null || roomMode
+              ? Promise.resolve(null)
+              : fetchResumePosition(fileId, controller.signal),
+          ]);
+          if (cancelled) return;
+          await player.start(file.url, {
+            startAt: from ?? historyStart,
+          });
+          return;
+        }
+
+        if (!canPlayRef.current) {
+          player.fail("Файл ещё загружается — основное видео недоступно");
+          return;
+        }
+
+        const externalAudio = (playbackState.audioOptions ?? [])
+          .map((o) => o.track)
+          .filter((t) => isExternalAudioTrack(t) && t.url)
+          .map((t) => t.url as string);
+
+        if (playback.stream.complete) {
+          // Full VOD: prefer the signed file URL (cache/CDN); video.url fallback.
+          openedAsProgressiveRef.current = false;
+          await progressiveStop().catch(() => {});
+          const url =
+            playback.video.url ||
+            (await fetchFileUrl(fileId, controller.signal)).url;
+          if (cancelled) return;
+          await player.start(url, {
+            startAt: from,
+            externalAudioUrls: externalAudio,
+            maxSeekableSec: null,
+          });
+          return;
+        }
+
+        if (!playback.stream.ready) {
+          player.fail("Загрузка ещё не началась — нет доступных сегментов");
+          return;
+        }
+
+        // Progressive: local range source clipped to max_seekable_bytes.
+        const localUrl = await progressiveStart({
+          sizeBytes: playback.video.size_bytes,
+          maxSeekableBytes: playback.stream.max_seekable_bytes,
+          segments: playback.stream.segments,
+        });
         if (cancelled) return;
-        const from = resumeAt.current ?? historyStart;
-        await player.start(file.url, { startAt: from });
+        openedAsProgressiveRef.current = true;
+        await player.start(localUrl, {
+          startAt: from,
+          externalAudioUrls: externalAudio,
+          maxSeekableSec: limitRef.current.maxSeekableSec,
+        });
       } catch (cause) {
         if (cancelled) return;
         const message =
@@ -189,9 +429,42 @@ export function PlayerScreen({
       cancelled = true;
       controller.abort();
     };
-    // Re-open on retry (`openToken`); `player.fail` is stable.
+    // Re-open on retry (`openToken`) / playback readiness.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileId, openToken, roomMode]);
+  }, [fileId, openToken, roomMode, mediaId, playbackStatus, playback?.stream.ready, playback?.stream.complete]);
+
+  // Keep the progressive source prefix in sync with each playback poll.
+  useEffect(() => {
+    if (roomMode || !openedAsProgressiveRef.current || !playback) return;
+    void progressiveUpdate({
+      maxSeekableBytes: playback.stream.max_seekable_bytes,
+      segments: playback.stream.segments,
+      sizeBytes: playback.video.size_bytes,
+    }).catch(() => {});
+    void playerSetMaxSeekable(limit.maxSeekableSec ?? null).catch(() => {});
+  }, [
+    roomMode,
+    playback,
+    limit.maxSeekableSec,
+  ]);
+
+  // Apply selected audio when it changes (and after tracks appear).
+  useEffect(() => {
+    if (mode === "waiting") return;
+    applyAudioTrack(selectedAudioId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAudioId, player.snapshot.tracks.length, mode]);
+
+  const handleSelectEpisode = useCallback(
+    (episode: PlaybackEpisode) => {
+      if (!episode.has_primary_video) return;
+      void progressiveStop().catch(() => {});
+      openedAsProgressiveRef.current = false;
+      resumeAt.current = null;
+      window.location.hash = `#/player/${episode.id}`;
+    },
+    [],
+  );
 
   return (
     <section className="app-fullbleed player-screen">
@@ -201,8 +474,25 @@ export function PlayerScreen({
           retry: () => setOpenToken((token) => token + 1),
         }}
         segments={intro.segments}
-        mediaId={intro.context?.mediaId ?? null}
+        mediaId={intro.context?.mediaId ?? mediaId}
         alreadyReviewed={Boolean(intro.context?.alreadyReviewed)}
+        mode={mode}
+        progress={progress}
+        limit={limit}
+        blockedToastToken={blockedToastToken}
+        onBlockedSeek={onBlockedSeek}
+        audioOptions={audioOptions}
+        selectedAudioId={selectedAudio?.id != null ? String(selectedAudio.id) : selectedAudioId}
+        onSelectAudio={(trackId) => {
+          selectAudio(trackId);
+          applyAudioTrack(trackId);
+        }}
+        seasonGroups={
+          seasonGroups.length > 0 ? seasonGroups : undefined
+        }
+        currentFileId={fileId}
+        onSelectEpisode={handleSelectEpisode}
+        waitingAtEdge={waitingAtEdge}
       />
     </section>
   );

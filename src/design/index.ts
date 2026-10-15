@@ -5,6 +5,7 @@ export {
   EmptyState,
   ErrorState,
   Input,
+  JacredAttribution,
   Modal,
   PosterCard,
   ProgressBar,

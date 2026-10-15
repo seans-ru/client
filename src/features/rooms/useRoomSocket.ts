@@ -242,12 +242,25 @@ export function useRoomSocket(options: UseRoomSocketOptions): UseRoomSocketResul
     return () => {
       cancelled = true;
       clearHeartbeat();
+      // Never abort a CONNECTING socket — the browser logs
+      // "WebSocket is closed before the connection is established" and the
+      // server sees a half-open peer (React StrictMode does this on purpose).
       try {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(encodeLeave());
-          ws.close();
+          ws.close(1000, "leave");
         } else if (ws.readyState === WebSocket.CONNECTING) {
-          ws.close();
+          ws.addEventListener(
+            "open",
+            () => {
+              try {
+                ws.close(1000, "unmount");
+              } catch {
+                // ignore
+              }
+            },
+            { once: true },
+          );
         }
       } catch {
         // Ignore teardown races.

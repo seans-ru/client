@@ -1,7 +1,7 @@
-# fetch-mpv.ps1 — download bundled libmpv for the Seans Windows client (M7).
+# fetch-mpv.ps1 - download bundled libmpv for the Seans Windows client (M7).
 #
 # BUILD / DEV TIME ONLY. Never call this from the application at runtime.
-# AV policy: no packers, no runtime DLL download — these DLLs are package resources.
+# AV policy: no packers, no runtime DLL download - these DLLs are package resources.
 #
 # Usage (repo root):
 #   powershell -ExecutionPolicy Bypass -File scripts\fetch-mpv.ps1
@@ -10,15 +10,15 @@
 # Result:
 #   src-tauri/resources/mpv/libmpv-2.dll   (+ dependency DLLs from the same package)
 #
-# Source: shinchiro mpv-winbuild-cmp (official community Windows builds of libmpv).
-# Release page: https://github.com/shinchiro/mpv-winbuild-cmp/releases
+# Source: shinchiro/mpv-winbuild-cmake (official community Windows builds of libmpv).
+# Release page: https://github.com/shinchiro/mpv-winbuild-cmake/releases
+# Use the *dev* package (libmpv-2.dll + headers). The non-dev mpv-x86_64 package
+# is the portable mpv.exe player and does NOT ship libmpv-2.dll.
 #
 # Pinned asset (winbuild x64). Re-verify SHA256 when bumping:
-#   URL:  https://github.com/shinchiro/mpv-winbuild-cmp/releases/download/mpv-x86_64-20240623/mpv-x86_64-20240623.7z
-#   SHA256: 8f4c1c2e0a5b9d7e6f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e
-#         ^ placeholder — run with -PrintHash after a trusted first download and
-#           paste the real value here before shipping. The script refuses to
-#           install when the hash is set and does not match.
+#   URL:  https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261006/mpv-dev-x86_64-20261006-git-6c092d978b.7z
+#   SHA256: bc0e016bdf6573bada824873d4746ab58d9bfac0ddd59c046f160312f81f9548
+#         (from GitHub release asset digest). Re-verify when bumping.
 #
 # The archive contains libmpv-2.dll (may be named mpv-2.dll) and its dependent
 # DLLs (ffmpeg, etc.). All *.dll files from the package root are copied into
@@ -35,11 +35,15 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# PS 5.1 on Win10 may default to TLS 1.0; GitHub requires 1.2+.
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch {}
 
 # --- Pinned release (keep URL + hash in sync) ---------------------------------
-$ReleaseUrl = "https://github.com/shinchiro/mpv-winbuild-cmp/releases/download/mpv-x86_64-20240623/mpv-x86_64-20240623.7z"
-# Expected SHA256 of the archive. "UNLOCKED" disables enforcement until pinned.
-$ExpectedSha256 = "8f4c1c2e0a5b9d7e6f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e"
+$ReleaseUrl = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261006/mpv-dev-x86_64-20261006-git-6c092d978b.7z"
+# Expected SHA256 of the archive (GitHub asset digest).
+$ExpectedSha256 = "bc0e016bdf6573bada824873d4746ab58d9bfac0ddd59c046f160312f81f9548"
 
 $root = Split-Path -Parent $PSScriptRoot
 $destDir = Join-Path $root "src-tauri\resources\mpv"
@@ -72,12 +76,12 @@ function Expand-ArchiveAny {
         return
     }
 
-    throw "No 7z.exe or tar.exe on PATH — install 7-Zip or Windows tar to extract $(Split-Path -Leaf $Archive)"
+    throw "No 7z.exe or tar.exe on PATH - install 7-Zip or Windows tar to extract $(Split-Path -Leaf $Archive)"
 }
 
 # Skip when already bundled (idempotent).
 if ((Test-Path $dllPath) -and -not $Force) {
-    Write-Host "libmpv-2.dll already present at $dllPath — skip (use -Force to refresh)."
+    Write-Host "libmpv-2.dll already present at $dllPath - skip (use -Force to refresh)."
     exit 0
 }
 
@@ -90,7 +94,14 @@ $archivePath = Join-Path $workDir (Split-Path -Leaf $ReleaseUrl)
 try {
     Write-Host "Downloading $ReleaseUrl"
     # Local temp file only; the archive never ships and nothing is executed from it.
-    Invoke-WebRequest -Uri $ReleaseUrl -OutFile $archivePath -UseBasicParsing
+    # Prefer curl.exe (Win10 1803+): more reliable on GitHub redirects than IWR/PS5.1.
+    $curl = Get-Command "curl.exe" -ErrorAction SilentlyContinue
+    if ($curl) {
+        & $curl.Source -L --fail --retry 3 --retry-delay 2 -o $archivePath $ReleaseUrl
+        if ($LASTEXITCODE -ne 0) { throw "curl download failed ($LASTEXITCODE)" }
+    } else {
+        Invoke-WebRequest -Uri $ReleaseUrl -OutFile $archivePath -UseBasicParsing
+    }
 
     $sha = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
     Write-Host "SHA256: $sha"
@@ -107,7 +118,7 @@ try {
         }
         Write-Host "SHA256 verified."
     } elseif (-not $SkipHashCheck) {
-        Write-Warning "ExpectedSha256 is not pinned yet — archive NOT verified. Run with -PrintHash, pin the value, re-run."
+        Write-Warning "ExpectedSha256 is not pinned yet - archive NOT verified. Run with -PrintHash, pin the value, re-run."
     }
 
     $extractDir = Join-Path $workDir "extract"
@@ -124,7 +135,7 @@ try {
     }
 
     if (-not $dlls) {
-        throw "No DLLs found in the extracted package — unexpected archive layout."
+        throw "No DLLs found in the extracted package - unexpected archive layout."
     }
 
     $copied = 0

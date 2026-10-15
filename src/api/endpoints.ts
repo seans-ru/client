@@ -17,9 +17,12 @@
  *   POST /api/tasks/{id}/cancel
  *   POST /api/rooms
  *   GET  /api/rooms/{code}
+ *   GET  /api/media/{id}/playback
  * Worker / torrent-worker endpoints are out of scope.
  */
 
+import { normalizePlayback } from "./playback";
+import type { PlaybackResponse } from "./playback";
 import { request } from "./client";
 import {
   normalizeFileUrl,
@@ -188,6 +191,32 @@ export async function cancelTask(
     await request<unknown>(`/api/tasks/${id}/cancel`, {
       method: "POST",
       signal,
+    }),
+  );
+}
+
+/**
+ * GET /api/media/{id}/playback — progressive stream state + audio tracks.
+ *
+ * Optional `fileId` selects a series episode (task/library file id). When the
+ * API answers the current unit only, pass the player's file id here so the
+ * backend can scope segments / audio_tracks to that episode.
+ *
+ * Poll every 5–10 s while `stream.complete` is false (`usePlayback`).
+ */
+export async function fetchPlayback(
+  mediaId: string | number,
+  options: { fileId?: string | number | null; signal?: AbortSignal } = {},
+): Promise<PlaybackResponse> {
+  const id = encodeURIComponent(String(mediaId));
+  const query =
+    options.fileId != null && options.fileId !== ""
+      ? { file_id: options.fileId }
+      : undefined;
+  return normalizePlayback(
+    await request<unknown>(`/api/media/${id}/playback`, {
+      query,
+      signal: options.signal,
     }),
   );
 }

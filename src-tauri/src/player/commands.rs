@@ -13,12 +13,16 @@ use super::session::{self, PlayerSnapshot, TrackInfo};
 /// * `start_at` — optional resume position in seconds (M9 history hook).
 /// * `hwnd_hint` — optional override HWND; normally omitted (child host window
 ///   is created automatically as a child of the main Tauri window).
+/// * `external_audio_urls` — extra audio files (non-embedded tracks, ac3/m4a).
+/// * `max_seekable_sec` — progressive ceiling; seeks are clamped to this.
 #[tauri::command]
 pub fn player_open(
     app: AppHandle,
     url: String,
     start_at: Option<f64>,
     hwnd_hint: Option<i64>,
+    external_audio_urls: Option<Vec<String>>,
+    max_seekable_sec: Option<f64>,
 ) -> Result<(), String> {
     if url.trim().is_empty() {
         return Err(super::ffi::OPEN_FAILED_ERROR.to_string());
@@ -27,7 +31,8 @@ pub fn player_open(
         Some(h) if h != 0 => h as isize,
         _ => session::main_window_hwnd(&app)?,
     };
-    session::open(app, url, parent, start_at)
+    session::set_max_seekable_sec(max_seekable_sec);
+    session::open(app, url, parent, start_at, external_audio_urls.unwrap_or_default())
 }
 
 #[tauri::command]
@@ -103,6 +108,16 @@ pub fn player_get_state() -> Result<PlayerSnapshot, String> {
 #[tauri::command]
 pub fn player_destroy() -> Result<(), String> {
     session::destroy();
+    // Progressive source is per-open; drop it with the player.
+    crate::progressive::stop();
+    Ok(())
+}
+
+/// Progressive seek ceiling in seconds (`None` clears it → full VOD range).
+/// Transport-level guard so seeks past `max_seekable_bytes` never reach mpv.
+#[tauri::command]
+pub fn player_set_max_seekable(seconds: Option<f64>) -> Result<(), String> {
+    session::set_max_seekable_sec(seconds);
     Ok(())
 }
 

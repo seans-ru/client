@@ -54,6 +54,11 @@ pub struct PlayerSnapshot {
     pub tracks: Vec<TrackInfo>,
     /// Active hwdec name ("no" when software). Surfaced read-only in Settings.
     pub hwdec: String,
+    /// Active video output (`vo-current`) — diagnostic for embed issues.
+    pub vo: String,
+    /// Decoded frame size (`video-params` w/h), 0 when no video.
+    pub video_w: i64,
+    pub video_h: i64,
     pub speed: f64,
     pub volume: f64,
     pub mute: bool,
@@ -73,6 +78,9 @@ impl Default for PlayerSnapshot {
             error: None,
             tracks: Vec::new(),
             hwdec: "no".to_string(),
+            vo: String::new(),
+            video_w: 0,
+            video_h: 0,
             speed: 1.0,
             volume: 100.0,
             mute: false,
@@ -224,6 +232,17 @@ unsafe fn refresh_snapshot(api: &MpvApi, handle: *mut MpvHandle, snap: &mut Play
     snap.hwdec = api
         .get_property_string(handle, "hwdec-current")
         .unwrap_or_else(|_| "no".to_string());
+    snap.vo = api
+        .get_property_string(handle, "vo-current")
+        .unwrap_or_default();
+    snap.video_w = api
+        .get_property_f64(handle, "width")
+        .unwrap_or(0.0)
+        .max(0.0) as i64;
+    snap.video_h = api
+        .get_property_f64(handle, "height")
+        .unwrap_or(0.0)
+        .max(0.0) as i64;
     snap.idle = api
         .get_property_flag(handle, "idle-active")
         .unwrap_or(snap.idle);
@@ -250,12 +269,29 @@ unsafe fn observe_core(api: &MpvApi, handle: *mut MpvHandle) {
     }
 }
 
+/// Make the WebView chrome see-through so the mpv `wid` child shows behind it.
+/// Currently unused: the host is HWND_TOP above the webview (see host.rs).
+#[allow(dead_code)]
+fn set_webview_transparent(app: &AppHandle, transparent: bool) {
+    if let Some(window) = app.get_webview_window("main") {
+        let color = if transparent {
+            Some(tauri::window::Color(0, 0, 0, 0))
+        } else {
+            Some(tauri::window::Color(0, 0, 0, 255))
+        };
+        let _ = window.set_background_color(color);
+    }
+}
+
 /// Open `url` in a fresh libmpv session bound to a child HWND of `parent_hwnd`.
+///
+/// `external_audio_urls` are attached as mpv `audio-files` (non-embedded tracks).
 pub fn open(
     app: AppHandle,
     url: String,
     parent_hwnd: isize,
     start_at: Option<f64>,
+    external_audio_urls: Vec<String>,
 ) -> Result<(), String> {
     // Tear down any previous session *outside* the new one's lock (join-safe).
     destroy();
@@ -267,10 +303,30 @@ pub fn open(
 
     // Options must be set before initialize.
     // wid: embed rendering into the child window created above.
-    if let Err(e) = unsafe { api.set_option_i64(handle, "wid", host.hwnd() as i64) } {
-        unsafe { api.terminate_destroy(handle) };
-        return Err(e);
+    let hwnd = host.hwnd();
+    if let Err(e) = unsafe { api.set_option_i64(handle, "wid", hwnd as i64) } {
+        // Some mpv builds accept wid only as a decimal string.
+        let as_text = hwnd.to_string();
+        if unsafe { api.set_option_string(handle, "wid", &as_text) }.is_err() {
+            unsafe { api.terminate_destroy(handle) };
+            return Err(e);
+        }
     }
+
+    // Prefer `gpu` (d3d11) — modern shinchiro builds ship gpu, not always direct3d.
+    // Never list `libmpv` here: that VO ignores `wid` and paints nothing.
+    let mut vo_ok = false;
+    for vo in ["gpu", "direct3d", "gpu-next"] {
+        if unsafe { api.set_option_string(handle, "vo", vo) }.is_ok() {
+            vo_ok = true;
+            break;
+        }
+    }
+    if !vo_ok {
+        let _ = unsafe { api.set_option_string(handle, "vo", "gpu") };
+    }
+    let _ = unsafe { api.set_option_string(handle, "gpu-api", "d3d11") };
+    let _ = unsafe { api.set_option_string(handle, "gpu-context", "d3d11") };
 
     // HW decode with automatic software fallback (hwdec=auto-safe).
     if let Err(e) = unsafe { api.set_option_string(handle, "hwdec", "auto-safe") } {
@@ -283,13 +339,28 @@ pub fn open(
     let _ = unsafe { api.set_option_string(handle, "osc", "no") };
     let _ = unsafe { api.set_option_string(handle, "input-default-bindings", "no") };
     let _ = unsafe { api.set_option_string(handle, "input-cursor", "no") };
-    let _ = unsafe { api.set_option_string(handle, "force-window", "immediate") };
+    // External (non-embedded) audio tracks: ac3/m4a sidecar files.
+    if !external_audio_urls.is_empty() {
+        let joined = external_audio_urls
+            .iter()
+            .filter(|u| !u.trim().is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(":");
+        if !joined.is_empty() {
+            let _ = unsafe { api.set_option_string(handle, "audio-files", &joined) };
+        }
+    }
+    // Do not set force-window: it can allocate a black surface before the
+    // first frame and confuse the embed path on some builds.
 
     if let Err(e) = unsafe { api.initialize(handle) } {
         unsafe { api.terminate_destroy(handle) };
         return Err(e);
     }
 
+    // Re-fit + WM_SIZE after initialize so the vo allocates a full-size surface.
+    host.fit_parent();
     unsafe { observe_core(&api, handle) };
 
     if let Some(secs) = start_at {
@@ -441,14 +512,21 @@ pub fn toggle_pause() -> Result<(), String> {
     })
 }
 
-/// Absolute seek to `seconds` (clamped to the current duration).
+/// Absolute seek to `seconds` (clamped to duration + progressive ceiling).
+///
+/// Progressive ceiling is a process-global (seconds) set via
+/// `set_max_seekable_sec` from the playback poll. It is **not** held in
+/// `SESSION` so `seek` cannot deadlock with `with_session`.
 pub fn seek(seconds: f64) -> Result<(), String> {
     with_session(|api, handle, shared| {
         let duration = shared
             .lock()
             .map(|s| s.duration)
             .unwrap_or(0.0);
-        let target = clamp_seek(seconds, duration);
+        let mut target = clamp_seek(seconds, duration);
+        if let Some(ceiling) = max_seekable_sec() {
+            target = target.min(ceiling);
+        }
         unsafe { api.set_property_f64(handle, "time-pos", target)? };
         if let Ok(mut snap) = shared.lock() {
             snap.position = target;
@@ -456,6 +534,36 @@ pub fn seek(seconds: f64) -> Result<(), String> {
         }
         Ok(())
     })
+}
+
+/// Bits of the progressive seek ceiling in seconds (`f64`).
+/// `0` means unlimited (VOD / unknown).
+fn max_seekable_sec_bits() -> &'static std::sync::atomic::AtomicU64 {
+    static BITS: OnceLock<std::sync::atomic::AtomicU64> = OnceLock::new();
+    BITS.get_or_init(|| std::sync::atomic::AtomicU64::new(0))
+}
+
+/// Current progressive seek ceiling in seconds, or `None` when unrestricted.
+pub fn max_seekable_sec() -> Option<f64> {
+    let bits = max_seekable_sec_bits().load(Ordering::SeqCst);
+    if bits == 0 {
+        return None;
+    }
+    let value = f64::from_bits(bits);
+    if value.is_finite() && value > 0.0 {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+/// Update the progressive seek ceiling in seconds (`None` clears it for VOD).
+pub fn set_max_seekable_sec(seconds: Option<f64>) {
+    let bits = match seconds {
+        Some(s) if s.is_finite() && s > 0.0 => s.to_bits(),
+        _ => 0,
+    };
+    max_seekable_sec_bits().store(bits, Ordering::SeqCst);
 }
 
 pub fn set_speed(speed: f64) -> Result<(), String> {

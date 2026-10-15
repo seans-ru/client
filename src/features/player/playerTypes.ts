@@ -23,6 +23,11 @@ export type PlayerSnapshot = {
   tracks: PlayerTrack[];
   /** Active hwdec name ("no" when software decoding). */
   hwdec: string;
+  /** Active mpv video output (`vo-current`) — embed diagnostics. */
+  vo: string;
+  /** Decoded frame width/height (0 when no video yet). */
+  video_w: number;
+  video_h: number;
   speed: number;
   volume: number;
   mute: boolean;
@@ -43,6 +48,9 @@ export const DEFAULT_SNAPSHOT: PlayerSnapshot = {
   error: null,
   tracks: [],
   hwdec: "no",
+  vo: "",
+  video_w: 0,
+  video_h: 0,
   speed: 1,
   volume: 100,
   mute: false,
@@ -78,6 +86,9 @@ export function normalizeSnapshot(raw: unknown): PlayerSnapshot {
         })
       : [],
     hwdec: typeof r.hwdec === "string" ? r.hwdec : DEFAULT_SNAPSHOT.hwdec,
+    vo: typeof r.vo === "string" ? r.vo : DEFAULT_SNAPSHOT.vo,
+    video_w: num(r.video_w, DEFAULT_SNAPSHOT.video_w),
+    video_h: num(r.video_h, DEFAULT_SNAPSHOT.video_h),
     speed: num(r.speed, DEFAULT_SNAPSHOT.speed),
     volume: num(r.volume, DEFAULT_SNAPSHOT.volume),
     mute: typeof r.mute === "boolean" ? r.mute : DEFAULT_SNAPSHOT.mute,

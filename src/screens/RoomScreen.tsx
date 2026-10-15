@@ -114,9 +114,17 @@ export function RoomScreen({ code }: { code: string }) {
   }, []);
 
   const fileId = useMemo(() => {
-    const id = detail?.room.task_file_id;
-    return id == null ? null : String(id);
-  }, [detail]);
+    const fromApi = detail?.room.task_file_id;
+    if (fromApi != null && String(fromApi) !== "") return String(fromApi);
+    // Host fallback: file id stashed at room creation (see LibraryList).
+    try {
+      const stash = sessionStorage.getItem(`seans.room.file.${code}`);
+      if (stash) return stash;
+    } catch {
+      // ignore
+    }
+    return null;
+  }, [detail, code]);
 
   if (!valid) {
     return (

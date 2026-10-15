@@ -54,3 +54,39 @@ export {
 export type { OpenPlayerNavOptions } from "./playerNav";
 export { usePlayer } from "./usePlayer";
 export type { UsePlayerState } from "./usePlayer";
+export { usePlayback, PLAYBACK_POLL_MS } from "./usePlayback";
+export type { UsePlaybackState, PlaybackAudioOption } from "./usePlayback";
+export {
+  BUFFER_WAITING_LABEL,
+  checkSeek,
+  formatProgressLabels,
+  formatSeekableUntil,
+  resolveDownloadProgress,
+  resolvePlaybackMode,
+  resolveSeekLimit,
+  SEEK_BLOCKED_TOAST,
+  seekLimitFromPlayback,
+  shouldAutoResumeAfterGrowth,
+  shouldPauseAtSeekEdge,
+} from "./progressiveHelpers";
+export type {
+  DownloadProgress,
+  PlaybackMode,
+  SeekDecision,
+  SeekLimit,
+} from "./progressiveHelpers";
+export {
+  formatPlaybackAudioLabel,
+  resolvePreferredAudioTrack,
+} from "./audioTrackHelpers";
+export {
+  formatEpisodeCode,
+  formatEpisodePickerLabel,
+  isEpisodePlayable,
+} from "./episodeHelpers";
+export {
+  playerSetMaxSeekable,
+  progressiveStart,
+  progressiveStop,
+  progressiveUpdate,
+} from "./progressiveApi";

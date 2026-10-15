@@ -79,8 +79,65 @@ call the Seans API and does not fetch DLLs.
 `#/player/:fileId` and stashes `startAt` in sessionStorage
 (`seans.player.startAt`). PlayerScreen consumes it once per file id.
 
+## Progressive playback (incomplete downloads)
+
+While the backend is still assembling a file into S3, the client plays the
+**contiguous seekable prefix** only. Source of truth is
+`GET /api/media/{id}/playback` → `stream.max_seekable_bytes`
+(fallback: `index.json.contiguous_bytes`). Even if a later segment becomes
+available on S3, seeks past the last reported prefix stay blocked until the
+next poll (5–7 s) updates the ceiling.
+
+| Mode | `stream` | Transport |
+|------|----------|-----------|
+| VOD | `complete` | presigned file URL (`/api/files/{id}/url` or `video.url`) |
+| Progressive | `ready && !complete` | loopback range server (`src-tauri/src/progressive/`) |
+| Waiting | `!ready` | no open yet — «Готовим первые сегменты…» |
+
+The loopback server binds `127.0.0.1:0`, maps HTTP Range requests onto
+`segments[i].url` GETs, and **clips every response to `max_seekable_bytes`**.
+JS also clamps seeks (`checkSeek`) and Rust `player_seek` honors
+`player_set_max_seekable` as a second guard.
+
+UI:
+- Seek rail zones: downloaded (mid teal) · seekable (light teal) · future (grey).
+- Dual progress: «Скачано» = `percent_downloaded`, «Доступно» = `percent_seekable`
+  (they differ on non-sequential download).
+- Scrub into the grey zone → toast «Этот момент ещё скачивается» (request is
+  not sent).
+- Hitting the prefix edge during playback → pause «Загрузка продолжается…»;
+  auto-resume when the prefix grows (position is never scrolled backwards).
+- `complete` mid-watch → seamless switch to the full file at the same position.
+
+### Multi-audio
+
+`audio_tracks[]` flags drive the Russian label:
+`["dub"]` → «Русский дубляж», `["voice"]` → «Многоголосый`,
+`["studio_dub"]` → studio title, `["one_voice"]` → «Одноголосый`,
+`["original"]` → «Оригинал», `["dual_audio"]` → «Dual/Multi».
+
+- `embedded=true` — switch container track (`aid`).
+- `embedded=false` — external ac3/m4a attached via mpv `audio-files` at open.
+- Selection is persisted per media item / per episode
+  (`seans.audio.episode.{mediaId}.{fileId}`, default product scope).
+
+### Series
+
+Catalog from `catalog.groups[]` or `files[]`. Picker labels `SxxEyy`
+(multi-episode packs `S01E03–E05`). Episodes without `has_primary_video`
+are disabled («загружается») — no Play.
+
+Known limitation: mp4 without faststart may not expose duration/seek index
+until more of the file arrives; seek stays limited to the contiguous prefix
+(remux is out of scope for v1).
+
 ## Smoke test (manual, parent)
 
 - HEVC + ASS subtitles in `.mkv` (embedded subs, audio track switch).
 - H.264 + AAC in `.mp4` (seek, speed 0.25–2, fullscreen).
 - Missing DLL build: clear `resources/mpv/`, expect the rebuild hint error.
+- Progressive: start a download, open the player at ~5%, seek only the teal
+  zones; grey-zone scrub shows the toast; at the edge the player pauses and
+  resumes when `percent_seekable` grows; after `complete` seeking is free.
+- Multi-audio: switch dub/voice/original for a movie and an episode; reopen
+  the episode and confirm the preference stuck.

@@ -11,10 +11,15 @@ export type OpenPlayerOptions = {
   startAt?: number | null;
   /** Optional HWND override; omit to use the main window child host. */
   hwndHint?: number | null;
+  /** External audio files for non-embedded tracks (ac3/m4a). */
+  externalAudioUrls?: string[];
+  /** Progressive seek ceiling in seconds; `null` = unrestricted VOD. */
+  maxSeekableSec?: number | null;
 };
 
 /**
- * Start playback of a presigned media URL in the embedded libmpv surface.
+ * Start playback of a presigned media URL (or progressive local source) in
+ * the embedded libmpv surface.
  * (Not the navigation hook — see `openPlayer(fileId, { startAt })` in
  * `playerNav` for route entry with a resume position.)
  */
@@ -26,6 +31,8 @@ export async function openPlayerUrl(
     url,
     startAt: options.startAt ?? null,
     hwndHint: options.hwndHint ?? null,
+    externalAudioUrls: options.externalAudioUrls ?? [],
+    maxSeekableSec: options.maxSeekableSec ?? null,
   });
 }
 

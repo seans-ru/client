@@ -23,6 +23,26 @@ export const API_BASE_URL: string = (
     : DEFAULT_API_BASE_URL
 ).replace(/\/+$/, "");
 
+/**
+ * Fetch that goes through `tauri-plugin-http` inside the desktop shell (no CORS)
+ * and falls back to window.fetch in plain browser / vitest.
+ */
+async function apiFetch(
+  input: string,
+  init: RequestInit,
+): Promise<Response> {
+  try {
+    const { isTauri } = await import("@tauri-apps/api/core");
+    if (isTauri()) {
+      const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http");
+      return (await tauriFetch(input, init)) as unknown as Response;
+    }
+  } catch {
+    // Plugin unavailable (vitest / plain vite) — fall through.
+  }
+  return fetch(input, init);
+}
+
 export type ApiErrorShape = {
   status: number;
   message: string;
@@ -124,7 +144,7 @@ export async function request<T>(
 
   let res: Response;
   try {
-    res = await fetch(apiUrl(path, options.query), {
+    res = await apiFetch(apiUrl(path, options.query), {
       method: options.method ?? "GET",
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),

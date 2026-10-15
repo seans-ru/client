@@ -121,6 +121,18 @@ export function formatHwdec(hwdec: string | null | undefined): string {
   return `ускорение: ${v}`;
 }
 
+/** Embed diagnostic: active `vo` + decoded frame size. */
+export function formatVoDebug(
+  vo: string | null | undefined,
+  w: number | null | undefined,
+  h: number | null | undefined,
+): string {
+  const name = String(vo ?? "").trim() || "—";
+  const wn = typeof w === "number" && w > 0 ? Math.trunc(w) : 0;
+  const hn = typeof h === "number" && h > 0 ? Math.trunc(h) : 0;
+  return wn > 0 && hn > 0 ? `vo=${name} · ${wn}×${hn}` : `vo=${name}`;
+}
+
 /** Seek bar percentage 0–100 for the progress rail. */
 export function positionPercent(
   position: number | null | undefined,

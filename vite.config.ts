@@ -11,6 +11,13 @@ export default defineConfig({
     watch: {
       ignored: ["**/src-tauri/**"],
     },
+    // Plain `npm run dev` (no Tauri): same-origin proxy avoids API CORS.
+    proxy: {
+      "/api": {
+        target: "https://api.seans.tedeshi.ru",
+        changeOrigin: true,
+      },
+    },
   },
   build: {
     target: "chrome105",

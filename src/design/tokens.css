@@ -39,6 +39,9 @@
   --focus-width: 2px;
   --focus-offset: 2px;
 
+  /* JacRed brand (attribution link, theme-independent) */
+  --jacred: #c72d33;
+
   /* Light palette (deep teal accent) */
   --bg: #f6f7f9;
   --bg-elevated: #ffffff;

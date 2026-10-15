@@ -15,11 +15,26 @@ const READY_FILE_STATUSES = new Set([
   "finished",
   "done",
   "ok",
+  "uploaded",
+  "stored",
 ]);
 
 /** True when a library file is prepared enough for «Смотреть» / «Создать комнату». */
 export function isFileReady(file: Pick<LibraryFile, "status">): boolean {
   return READY_FILE_STATUSES.has(String(file?.status ?? "").trim().toLowerCase());
+}
+
+/**
+ * True when Play may be offered. Progressive mode allows «Смотреть» while the
+ * file is still downloading (the player gates on `stream.ready` / primary
+ * video). Failed / unknown-empty statuses stay locked.
+ */
+export function canOfferPlay(file: Pick<LibraryFile, "status">): boolean {
+  const status = String(file?.status ?? "").trim().toLowerCase();
+  if (status === "failed" || status === "error") return false;
+  if (READY_FILE_STATUSES.has(status)) return true;
+  // Any non-empty non-failed status means a live download / processing job.
+  return status.length > 0;
 }
 
 /** Keep only ready files. */
@@ -60,6 +75,8 @@ export function formatLibraryStatus(status: string): string {
     case "completed":
     case "finished":
     case "done":
+    case "uploaded":
+    case "stored":
       return "Готово";
     case "downloading":
     case "loading":

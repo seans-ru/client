@@ -13,6 +13,7 @@ import {
   Button,
   EmptyState,
   ErrorState,
+  JacredAttribution,
   Modal,
   Spinner,
 } from "../../design/primitives";
@@ -180,14 +181,20 @@ export function ReleaseList({
   return (
     <div className="release-list">
       <div className="release-toolbar">
-        <input
-          className="input release-filter"
-          type="search"
-          placeholder="Фильтр по названию, трекеру…"
-          aria-label="Фильтр релизов"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
+        <div className="release-filter-wrap">
+          <span className="input-label">Фильтр</span>
+          <div className="search-input-row">
+            <input
+              className="input release-filter"
+              type="search"
+              placeholder="Фильтр по названию, трекеру…"
+              aria-label="Фильтр релизов"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <JacredAttribution />
+          </div>
+        </div>
         <label className="release-sort">
           <span className="input-label">Сортировка</span>
           <select

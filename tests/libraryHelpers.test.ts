@@ -5,6 +5,7 @@ import {
   filterReadyFiles,
   formatEpisodeLabel,
   formatLibraryStatus,
+  canOfferPlay,
   isFileReady,
 } from "../src/features/library/libraryHelpers";
 
@@ -45,7 +46,17 @@ describe("formatEpisodeLabel", () => {
 
 describe("isFileReady / filterReadyFiles", () => {
   it("accepts ready-like statuses case-insensitively", () => {
-    for (const status of ["ready", "Ready", "available", "completed", "done", "ok"]) {
+    for (const status of [
+      "ready",
+      "Ready",
+      "available",
+      "completed",
+      "done",
+      "ok",
+      "uploaded",
+      "Uploaded",
+      "stored",
+    ]) {
       expect(isFileReady({ status })).toBe(true);
     }
   });
@@ -71,6 +82,8 @@ describe("isFileReady / filterReadyFiles", () => {
 describe("formatLibraryStatus", () => {
   it("maps known statuses to Russian labels", () => {
     expect(formatLibraryStatus("ready")).toBe("Готово");
+    expect(formatLibraryStatus("uploaded")).toBe("Готово");
+    expect(formatLibraryStatus("stored")).toBe("Готово");
     expect(formatLibraryStatus("downloading")).toBe("Загрузка");
     expect(formatLibraryStatus("processing")).toBe("Обработка");
     expect(formatLibraryStatus("queued")).toBe("В очереди");
@@ -90,5 +103,19 @@ describe("fileBaseName", () => {
     expect(fileBaseName("s1\\e1.mkv")).toBe("e1.mkv");
     expect(fileBaseName("movie.mkv")).toBe("movie.mkv");
     expect(fileBaseName("")).toBe("");
+  });
+});
+
+describe("canOfferPlay", () => {
+  it("offers Play for ready and in-progress downloads", () => {
+    expect(canOfferPlay(makeFile({ status: "ready" }))).toBe(true);
+    expect(canOfferPlay(makeFile({ status: "downloading" }))).toBe(true);
+    expect(canOfferPlay(makeFile({ status: "processing" }))).toBe(true);
+  });
+
+  it("locks Play for failed / empty statuses", () => {
+    expect(canOfferPlay(makeFile({ status: "failed" }))).toBe(false);
+    expect(canOfferPlay(makeFile({ status: "error" }))).toBe(false);
+    expect(canOfferPlay(makeFile({ status: "" }))).toBe(false);
   });
 });

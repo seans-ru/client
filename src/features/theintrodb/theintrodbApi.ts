@@ -95,10 +95,27 @@ function buildMediaUrl(params: FetchSegmentsParams): string {
 async function fetchAndNormalize(
   params: FetchSegmentsParams,
 ): Promise<TheIntroDbBundle> {
-  const res = await fetch(buildMediaUrl(params), {
-    method: "GET",
-    headers: { Accept: "application/json" },
-  });
+  let res: Response;
+  try {
+    const { isTauri } = await import("@tauri-apps/api/core");
+    if (isTauri()) {
+      const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http");
+      res = (await tauriFetch(buildMediaUrl(params), {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      })) as unknown as Response;
+    } else {
+      res = await fetch(buildMediaUrl(params), {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+    }
+  } catch {
+    res = await fetch(buildMediaUrl(params), {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+  }
   if (!res.ok) {
     throw new Error(`TheIntroDB HTTP ${res.status}`);
   }

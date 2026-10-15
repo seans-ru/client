@@ -292,13 +292,27 @@ export function normalizeRoomInfo(raw: unknown): RoomInfo {
     code: str(r.code),
     ws_url: str(r.ws_url),
   };
-  // Guest join needs the library file; accept the contract name and a common alias.
-  const fileRaw = r.task_file_id ?? r.file_id;
-  if (fileRaw !== undefined && fileRaw !== null) {
+  // Guest join needs the library file. Accept the contract name plus common
+  // aliases and nested `{ task_file: { id } }` / `{ file: { id } }` shapes.
+  const nested =
+    r.task_file ?? r.file ?? r.taskFile ?? (r.library_file as unknown);
+  const nestedId =
+    nested != null && typeof nested === "object"
+      ? asRaw(nested).id ?? asRaw(nested).task_file_id
+      : undefined;
+  const fileRaw =
+    r.task_file_id ??
+    r.file_id ??
+    r.taskFileId ??
+    r.fileId ??
+    r.library_file_id ??
+    nestedId;
+  if (fileRaw !== undefined && fileRaw !== null && fileRaw !== "") {
     info.task_file_id = id(fileRaw);
   }
-  if (r.host_id !== undefined && r.host_id !== null) {
-    info.host_id = id(r.host_id);
+  const hostRaw = r.host_id ?? r.hostId ?? r.host_user_id ?? r.hostUserId;
+  if (hostRaw !== undefined && hostRaw !== null) {
+    info.host_id = id(hostRaw);
   }
   return info;
 }
@@ -308,8 +322,17 @@ export function normalizeRoomDetail(raw: unknown): RoomDetailResponse {
   const r = asRaw(raw);
   // Tolerate a bare room object at the top level when `room` is absent.
   const roomRaw = r.room !== undefined && r.room !== null ? r.room : raw;
+  const room = normalizeRoomInfo(roomRaw);
+  // Some APIs put the file id on the envelope, not inside `room`.
+  if (room.task_file_id == null) {
+    const outer =
+      r.task_file_id ?? r.file_id ?? r.taskFileId ?? r.fileId ?? r.library_file_id;
+    if (outer !== undefined && outer !== null && outer !== "") {
+      room.task_file_id = id(outer);
+    }
+  }
   return {
-    room: normalizeRoomInfo(roomRaw),
+    room,
     members: Array.isArray(r.members) ? r.members.map(normalizeRoomMember) : [],
   };
 }

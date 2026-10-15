@@ -84,6 +84,33 @@ export function Input({
   );
 }
 
+/* -------------------------------------------------- Jacred attribution */
+
+/**
+ * Credit for search/release discovery powered by JacRed.
+ * The brand name links to the JacRed referral URL.
+ */
+export function JacredAttribution({ className }: { className?: string }) {
+  return (
+    <p
+      className={cx("jacred-attribution", className)}
+      title="Поиск и подбор релизов выполняется системой JacRed"
+    >
+      <span>
+        Поиск работает на{" "}
+        <a
+          className="jacred-attribution-link"
+          href="https://jacred.su/r/287f21cb-494d-4e9c-a29a-1f2eaf7c8082"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          JacRed
+        </a>
+      </span>
+    </p>
+  );
+}
+
 /* ------------------------------------------------------------------- Badge */
 
 export type BadgeTone = "neutral" | "accent" | "danger";
