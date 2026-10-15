@@ -198,27 +198,75 @@ export async function cancelTask(
 /**
  * GET /api/media/{id}/playback — progressive stream state + audio tracks.
  *
- * Optional `fileId` selects a series episode (task/library file id). When the
- * API answers the current unit only, pass the player's file id here so the
- * backend can scope segments / audio_tracks to that episode.
+ * Series episode selection uses `?season=&episode=` (the seans API contract).
+ * `stream` may be `null` before the first worker heartbeat — treat as waiting.
  *
- * Poll every 5–10 s while `stream.complete` is false (`usePlayback`).
+ * Poll every 5–10 s while the file is incomplete (`usePlayback`).
  */
 export async function fetchPlayback(
   mediaId: string | number,
-  options: { fileId?: string | number | null; signal?: AbortSignal } = {},
+  options: {
+    season?: number | null;
+    episode?: number | null;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<PlaybackResponse> {
   const id = encodeURIComponent(String(mediaId));
-  const query =
-    options.fileId != null && options.fileId !== ""
-      ? { file_id: options.fileId }
-      : undefined;
+  const query: Record<string, string | number> = {};
+  if (options.season != null && Number.isFinite(options.season)) {
+    query.season = Math.trunc(options.season);
+  }
+  if (options.episode != null && Number.isFinite(options.episode)) {
+    query.episode = Math.trunc(options.episode);
+  }
   return normalizePlayback(
     await request<unknown>(`/api/media/${id}/playback`, {
-      query,
+      query: Object.keys(query).length > 0 ? query : undefined,
       signal: options.signal,
     }),
   );
+}
+
+/** `GET /api/media/{id}/episodes` — series (or movie) episode list. */
+export async function fetchMediaEpisodes(
+  mediaId: string | number,
+  options: { season?: number | null; signal?: AbortSignal } = {},
+): Promise<{
+  media_id: ApiId;
+  title: string;
+  kind: string;
+  episodes: Array<{
+    episode_id: string;
+    season: number;
+    episode: number;
+    episode_end?: number | null;
+    title?: string | null;
+    audio_tracks?: unknown[];
+    subtitle_tracks?: unknown[];
+  }>;
+}> {
+  const id = encodeURIComponent(String(mediaId));
+  const query =
+    options.season != null && Number.isFinite(options.season)
+      ? { season: Math.trunc(options.season) }
+      : undefined;
+  return request<never>(`/api/media/${id}/episodes`, {
+    query,
+    signal: options.signal,
+  }) as Promise<{
+    media_id: ApiId;
+    title: string;
+    kind: string;
+    episodes: Array<{
+      episode_id: string;
+      season: number;
+      episode: number;
+      episode_end?: number | null;
+      title?: string | null;
+      audio_tracks?: unknown[];
+      subtitle_tracks?: unknown[];
+    }>;
+  }>;
 }
 
 /** GET /api/library — saved media items with their prepared files. */

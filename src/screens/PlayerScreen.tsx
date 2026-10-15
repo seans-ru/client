@@ -117,29 +117,46 @@ export function PlayerScreen({
     resumeAt.current = startAt ?? consumeStartAt();
   }
 
-  // Resolve media id (playback endpoint key). TheIntroDB context may already
-  // have it; fall back to a direct library lookup.
+  // Season/episode for the playback API (`?season=&episode=`).
+  const [episodeCtx, setEpisodeCtx] = useState<{
+    season: number | null;
+    episode: number | null;
+  }>({ season: null, episode: null });
+
+  // Resolve media id + season/episode. TheIntroDB context may already have
+  // the media id; always resolve season/episode from the library file row.
   useEffect(() => {
     let cancelled = false;
-    if (intro.context?.mediaId != null) {
-      setMediaId(intro.context.mediaId);
-      return;
-    }
     void (async () => {
       try {
         const ctx = await resolveFileMedia(fileId);
         if (cancelled) return;
-        setMediaId(ctx?.mediaId ?? null);
+        if (ctx) {
+          setMediaId(ctx.mediaId);
+          setEpisodeCtx({ season: ctx.season, episode: ctx.episode });
+        } else if (intro.context?.mediaId != null) {
+          setMediaId(intro.context.mediaId);
+          setEpisodeCtx({
+            season: intro.context.season,
+            episode: intro.context.episode,
+          });
+        }
       } catch {
-        if (!cancelled) setMediaId(null);
+        if (!cancelled && intro.context?.mediaId != null) {
+          setMediaId(intro.context.mediaId);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [fileId, intro.context?.mediaId]);
+  }, [fileId, intro.context?.mediaId, intro.context?.season, intro.context?.episode]);
 
-  const playbackState = usePlayback(mediaId, fileId, { enabled: !roomMode });
+  const playbackState = usePlayback(mediaId, fileId, {
+    enabled: !roomMode,
+    season: episodeCtx.season,
+    episode: episodeCtx.episode,
+  });
   const {
     mode,
     limit,
@@ -273,7 +290,7 @@ export function PlayerScreen({
   const openedAsProgressiveRef = useRef(false);
   useEffect(() => {
     if (roomMode) return;
-    if (mode !== "vod" || !playback?.stream.complete) return;
+    if (mode !== "vod" || !playback?.stream?.complete) return;
     if (!openedAsProgressiveRef.current) return;
     openedAsProgressiveRef.current = false;
     void progressiveStop().catch(() => {});
@@ -281,7 +298,7 @@ export function PlayerScreen({
     const position = snapshotRef.current.position;
     setOpenToken((t) => t + 1);
     resumeAt.current = position;
-  }, [mode, playback?.stream.complete, roomMode, player]);
+  }, [mode, playback?.stream?.complete, roomMode, player]);
 
   const playerWithHistory = useMemo<UsePlayerState>(() => {
     return {
@@ -343,6 +360,9 @@ export function PlayerScreen({
   const playbackStatus = playbackState.status;
   const canPlayRef = useRef(canPlay);
   canPlayRef.current = canPlay;
+  const streamReady = playback?.stream?.ready ?? false;
+  const streamComplete = playback?.stream?.complete ?? false;
+  const hasStream = playback?.stream != null;
   useEffect(() => {
     // Wait until playback metadata is ready when we expect progressive.
     if (!roomMode && mediaId != null && playbackStatus === "loading") {
@@ -356,11 +376,12 @@ export function PlayerScreen({
       try {
         const from = resumeAt.current;
 
-        // Room mode / missing playback: classic presigned VOD URL.
-        if (roomMode || !playback || mediaId == null) {
+        // Room mode still uses the classic presigned VOD URL (hosts share
+        // fully prepared files).
+        if (roomMode) {
           const [file, historyStart] = await Promise.all([
             fetchFileUrl(fileId, controller.signal),
-            from != null || roomMode
+            from != null
               ? Promise.resolve(null)
               : fetchResumePosition(fileId, controller.signal),
           ]);
@@ -371,30 +392,70 @@ export function PlayerScreen({
           return;
         }
 
-        if (!canPlayRef.current) {
-          player.fail("Файл ещё загружается — основное видео недоступно");
+        // Incomplete downloads must NEVER fall back to fetchFileUrl — the
+        // final object does not exist yet (library still has status=pending).
+        if (mediaId == null) {
+          player.fail(
+            "Не найден media id для файла — обновите библиотеку и повторите",
+          );
           return;
         }
 
-        const externalAudio = (playbackState.audioOptions ?? [])
-          .map((o) => o.track)
-          .filter((t) => isExternalAudioTrack(t) && t.url)
-          .map((t) => t.url as string);
-
-        if (playback.stream.complete) {
-          // Full VOD: prefer the signed file URL (cache/CDN); video.url fallback.
+        /** Classic VOD via the final object (`GET /api/files/{id}/url`). */
+        const startVod = async (externalAudio: string[], url?: string) => {
           openedAsProgressiveRef.current = false;
           await progressiveStop().catch(() => {});
-          const url =
-            playback.video.url ||
-            (await fetchFileUrl(fileId, controller.signal)).url;
+          const mediaUrl =
+            url || (await fetchFileUrl(fileId, controller.signal)).url;
           if (cancelled) return;
-          await player.start(url, {
+          await player.start(mediaUrl, {
             startAt: from,
             externalAudioUrls: externalAudio,
             maxSeekableSec: null,
           });
+        };
+
+        // Playback API missing / 404 — legacy library rows, or media without
+        // MediaEpisode. Fall back to the uploaded final object (VOD).
+        if (!playback) {
+          if (playbackStatus === "error") {
+            try {
+              await startVod([]);
+              return;
+            } catch {
+              player.fail(
+                playbackState.error ??
+                  "Не удалось получить состояние загрузки (playback API)",
+              );
+              return;
+            }
+          }
+          player.fail("Ожидаем данные playback…");
           return;
+        }
+
+        const externalAudio = (playback.audio_tracks ?? [])
+          .filter((t) => isExternalAudioTrack(t) && t.url)
+          .map((t) => t.url as string);
+
+        // Complete VOD (includes legacy uploaded files synthesized by API).
+        if (playback.stream?.complete || playback.video.url) {
+          await startVod(externalAudio, playback.video.url);
+          return;
+        }
+
+        // No heartbeat.stream — for already-uploaded files the final object
+        // exists (`fetchFileUrl`); for in-progress ones wait for the worker.
+        if (!playback.stream) {
+          try {
+            await startVod(externalAudio);
+            return;
+          } catch {
+            player.fail(
+              "Воркер ещё не передал stream-прогресс — сегменты появляются, ожидайте…",
+            );
+            return;
+          }
         }
 
         if (!playback.stream.ready) {
@@ -402,9 +463,15 @@ export function PlayerScreen({
           return;
         }
 
+        if (!canPlayRef.current) {
+          player.fail("Файл ещё загружается — основное видео недоступно");
+          return;
+        }
+
         // Progressive: local range source clipped to max_seekable_bytes.
+        const sizeBytes = playback.stream.size_bytes || playback.video.size_bytes;
         const localUrl = await progressiveStart({
-          sizeBytes: playback.video.size_bytes,
+          sizeBytes,
           maxSeekableBytes: playback.stream.max_seekable_bytes,
           segments: playback.stream.segments,
         });
@@ -429,24 +496,29 @@ export function PlayerScreen({
       cancelled = true;
       controller.abort();
     };
-    // Re-open on retry (`openToken`) / playback readiness.
+    // Re-open on retry / playback readiness transitions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileId, openToken, roomMode, mediaId, playbackStatus, playback?.stream.ready, playback?.stream.complete]);
+  }, [
+    fileId,
+    openToken,
+    roomMode,
+    mediaId,
+    playbackStatus,
+    hasStream,
+    streamReady,
+    streamComplete,
+  ]);
 
   // Keep the progressive source prefix in sync with each playback poll.
   useEffect(() => {
-    if (roomMode || !openedAsProgressiveRef.current || !playback) return;
+    if (roomMode || !openedAsProgressiveRef.current || !playback?.stream) return;
     void progressiveUpdate({
       maxSeekableBytes: playback.stream.max_seekable_bytes,
       segments: playback.stream.segments,
-      sizeBytes: playback.video.size_bytes,
+      sizeBytes: playback.stream.size_bytes || playback.video.size_bytes,
     }).catch(() => {});
     void playerSetMaxSeekable(limit.maxSeekableSec ?? null).catch(() => {});
-  }, [
-    roomMode,
-    playback,
-    limit.maxSeekableSec,
-  ]);
+  }, [roomMode, playback, limit.maxSeekableSec]);
 
   // Apply selected audio when it changes (and after tracks appear).
   useEffect(() => {

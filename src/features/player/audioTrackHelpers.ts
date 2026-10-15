@@ -76,6 +76,10 @@ export function formatAudioLanguage(language: string | null | undefined): string
  * Flag priority: original > dub > studio_dub > voice > one_voice > dual_audio.
  */
 export function formatPlaybackAudioLabel(track: PlaybackAudioTrack): string {
+  // Backend-composed label wins when present (seans `audio_tracks[].label`).
+  const backendLabel = String(track.label ?? "").trim();
+  if (backendLabel) return backendLabel;
+
   const flags = (track.flags ?? []).map((f) => String(f).toLowerCase());
   const title = String(track.title ?? "").trim();
   const lang = formatAudioLanguage(track.language);

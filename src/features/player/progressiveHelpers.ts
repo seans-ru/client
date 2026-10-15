@@ -64,6 +64,7 @@ function clampPct(n: number): number {
 export function resolvePlaybackMode(
   stream: Pick<PlaybackStream, "ready" | "complete"> | null | undefined,
 ): PlaybackMode {
+  // `stream: null` = no worker heartbeat yet.
   if (!stream) return "waiting";
   if (stream.complete) return "vod";
   if (stream.ready) return "progressive";
@@ -128,12 +129,14 @@ export function resolveSeekLimit(input: {
 export function seekLimitFromPlayback(
   stream: Pick<
     PlaybackStream,
-    "max_seekable_bytes" | "percent_seekable" | "complete" | "ready"
-  > | null,
+    "max_seekable_bytes" | "percent_seekable" | "complete" | "ready" | "size_bytes"
+  > | null | undefined,
   video: Pick<PlaybackVideo, "size_bytes" | "duration_ms"> | null,
 ): SeekLimit {
   if (!stream) {
-    return { maxSeekableSec: null, seekableRatio: null, durationSec: null };
+    // No heartbeat yet — waiting; duration may still be known.
+    const durationSec = resolveDurationSec({ durationMs: video?.duration_ms });
+    return { maxSeekableSec: 0, seekableRatio: 0, durationSec };
   }
   // Complete file: the whole duration is seekable.
   if (stream.complete) {
@@ -147,7 +150,7 @@ export function seekLimitFromPlayback(
   return resolveSeekLimit({
     durationMs: video?.duration_ms,
     maxSeekableBytes: stream.max_seekable_bytes,
-    sizeBytes: video?.size_bytes,
+    sizeBytes: video?.size_bytes ?? stream.size_bytes,
     percentSeekable: stream.percent_seekable,
   });
 }
@@ -160,7 +163,7 @@ export function resolveDownloadProgress(
   stream: Pick<
     PlaybackStream,
     "percent_downloaded" | "percent_seekable" | "complete"
-  > | null,
+  > | null | undefined,
 ): DownloadProgress {
   if (!stream) return { percentDownloaded: 0, percentSeekable: 0 };
   if (stream.complete) {

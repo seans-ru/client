@@ -70,14 +70,22 @@ export type UsePlaybackState = {
 
 /**
  * Load + poll playback for a media item (optionally a specific series episode).
- * `fileId` is the task/library file id (`#/player/:fileId`).
+ *
+ * The seans API selects the episode with `?season=&episode=` — not by file id.
+ * `fileId` is still used for the audio preference key and history.
  */
 export function usePlayback(
   mediaId: string | number | null,
   fileId: string | number | null,
-  options: { enabled?: boolean } = {},
+  options: {
+    enabled?: boolean;
+    season?: number | null;
+    episode?: number | null;
+  } = {},
 ): UsePlaybackState {
-  const enabled = options.enabled !== false && mediaId != null && fileId != null;
+  const enabled = options.enabled !== false && mediaId != null;
+  const season = options.season ?? null;
+  const episode = options.episode ?? null;
   const [playback, setPlayback] = useState<PlaybackResponse | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
@@ -113,7 +121,8 @@ export function usePlayback(
       if (!enabled) return;
       try {
         const next = await fetchPlayback(mediaId as ApiId, {
-          fileId: fileId as ApiId,
+          season,
+          episode,
           signal,
         });
         if (signal.aborted) return;
@@ -134,7 +143,7 @@ export function usePlayback(
         setStatus("error");
       }
     },
-    [enabled, mediaId, fileId],
+    [enabled, mediaId, season, episode],
   );
 
   // Initial load + reload token.
@@ -148,11 +157,12 @@ export function usePlayback(
     setStatus((s) => (s === "ready" ? s : "loading"));
     void fetchOnce(controller.signal);
     return () => controller.abort();
-  }, [enabled, mediaKey, fileKey, reloadToken, fetchOnce]);
+  }, [enabled, mediaKey, fileKey, season, episode, reloadToken, fetchOnce]);
 
-  // Poll while incomplete (5–10 s cadence).
+  // Poll while incomplete (5–10 s cadence). `stream: null` also polls.
   useEffect(() => {
-    if (!enabled || !playback || playback.stream.complete) return;
+    if (!enabled || !playback) return;
+    if (playback.stream?.complete) return;
     let cancelled = false;
     let controller: AbortController | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -251,11 +261,18 @@ export function usePlayback(
   );
 
   const canPlay = useMemo(() => {
-    if (!playback) return mode !== "waiting";
-    if (currentEpisode) return isEpisodePlayable(currentEpisode);
+    if (!playback) return false;
+    // Catalog episode gate (series picker).
+    if (currentEpisode && !isEpisodePlayable(currentEpisode)) return false;
     if (playback.video.primary === false) return false;
-    return mode !== "waiting" || playback.stream.ready;
-  }, [playback, currentEpisode, mode]);
+    // Complete VOD (also legacy uploaded files with a synthesized stream).
+    if (playback.stream?.complete || playback.video.url) return true;
+    // Progressive starts as soon as the worker reports stream_ready.
+    if (playback.stream?.ready) return true;
+    // No stream snapshot: try the final object (legacy VOD); PlayerScreen
+    // falls back to fetchFileUrl and only waits if that 404s.
+    return playback.stream == null;
+  }, [playback, currentEpisode]);
 
   return {
     status,

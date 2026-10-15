@@ -19,7 +19,9 @@ export type PlaybackContainer = "mkv" | "mp4" | "webm" | "avi" | "mov" | string;
 export type PlaybackVideo = {
   size_bytes: number;
   container: PlaybackContainer;
-  /** Optional full-file / progressive URL when the API exposes it. */
+  /** Task/library file id of this video (`video.task_file_id` in the API). */
+  task_file_id?: string;
+  /** Optional full-file URL — only present when `stream.complete`. */
   url?: string;
   /** Known duration; when absent the demuxer must probe the container. */
   duration_ms?: number;
@@ -47,12 +49,16 @@ export type PlaybackAudioTrack = {
   flags: PlaybackAudioFlag[];
   /** `true` — track lives in the container; `false` — external file (ac3/m4a). */
   embedded: boolean;
+  /** Backend-composed label (falls back to flag-based helper). */
+  label?: string;
   /** Optional studio / human title (`Лучезарный`, `Кириллица`, …). */
   title?: string;
   /** Direct URL for external (non-embedded) tracks. */
   url?: string;
   /** Container track index when `embedded` (used to switch inside mpv). */
   track_index?: number;
+  /** Library file id for external tracks. */
+  task_file_id?: string;
 };
 
 export type PlaybackSubtitleTrack = {
@@ -85,6 +91,8 @@ export type PlaybackStream = {
   percent_downloaded: number;
   percent_seekable: number;
   segment_size: number;
+  /** Virtual file size (mirrors `video.size_bytes`). */
+  size_bytes?: number;
   segments: PlaybackSegment[];
   /** Optional index.json URL for polling without the full playback payload. */
   index_url?: string;
@@ -119,15 +127,29 @@ export type PlaybackCatalog = {
   files?: PlaybackEpisode[];
 };
 
-/** Full `GET /api/media/{id}/playback` response. */
+/** Full `GET /api/media/{id}/playback` response (seans API shape). */
 export type PlaybackResponse = {
   media_id: ApiId;
-  /** Task / library file id of the current playable unit. */
+  /** Task / library file id of the current playable unit (`video.task_file_id`). */
   file_id: ApiId;
+  /** Series episode id (backend `episode_id`). */
+  episode_id?: string;
+  title?: string;
+  /** `movie` | `series` (backend `kind`). */
+  kind?: string;
+  season?: number;
+  episode?: number;
+  episode_end?: number | null;
+  duration_ms?: number | null;
   video: PlaybackVideo;
   audio_tracks: PlaybackAudioTrack[];
   subtitle_tracks: PlaybackSubtitleTrack[];
-  stream: PlaybackStream;
+  /**
+   * Progressive stream state. `null` when the worker has not reported a
+   * heartbeat.stream yet — treat as waiting, never fall back to the final
+   * object URL (it does not exist until `complete`).
+   */
+  stream: PlaybackStream | null;
   catalog?: PlaybackCatalog;
 };
 
@@ -181,12 +203,16 @@ export function normalizePlaybackAudioTrack(raw: unknown): PlaybackAudioTrack {
     // Missing `embedded` is treated as in-container (the common case).
     embedded: r.embedded === undefined ? true : bool(r.embedded, true),
   };
+  const label = strOrNull(r.label);
+  if (label !== undefined) track.label = label;
   const title = strOrNull(r.title);
   if (title !== undefined) track.title = title;
   const url = strOrNull(r.url);
   if (url !== undefined) track.url = url;
   const idx = optNum(r.track_index ?? r.index);
   if (idx !== undefined) track.track_index = idx;
+  const taskFileId = strOrNull(r.task_file_id);
+  if (taskFileId !== undefined) track.task_file_id = taskFileId;
   return track;
 }
 
@@ -232,6 +258,8 @@ export function normalizePlaybackStream(raw: unknown): PlaybackStream {
       ? r.segments.map(normalizePlaybackSegment)
       : [],
   };
+  const size = optNum(r.size_bytes);
+  if (size !== undefined) stream.size_bytes = size;
   const indexUrl = strOrNull(r.index_url ?? r.indexUrl);
   if (indexUrl !== undefined) stream.index_url = indexUrl;
   return stream;
@@ -243,8 +271,10 @@ export function normalizePlaybackVideo(raw: unknown): PlaybackVideo {
     size_bytes: num(r.size_bytes),
     container: str(r.container).toLowerCase() || "mkv",
   };
-  const url = strOrNull(r.url);
-  if (url !== undefined) video.url = url;
+  const taskFileId = strOrNull(r.task_file_id ?? r.taskFileId ?? r.file_id);
+  if (taskFileId !== undefined) video.task_file_id = taskFileId;
+  // `url: null` is the incomplete case — do not treat as a playable URL.
+  if (typeof r.url === "string" && r.url.length > 0) video.url = r.url;
   const durationMs = optNum(r.duration_ms ?? r.durationMs);
   if (durationMs !== undefined) video.duration_ms = durationMs;
   if (r.primary !== undefined) video.primary = bool(r.primary, true);
@@ -303,14 +333,28 @@ export function normalizePlaybackCatalog(raw: unknown): PlaybackCatalog | undefi
   return catalog;
 }
 
-/** Map a raw playback payload to `PlaybackResponse`. */
+/** Map a raw playback payload to `PlaybackResponse` (seans API shape). */
 export function normalizePlayback(raw: unknown): PlaybackResponse {
   const r = asRaw(raw);
-  const streamRaw = r.stream !== undefined && r.stream !== null ? r.stream : {};
+  const video = normalizePlaybackVideo(r.video);
+  // `stream: null` means the worker has not reported a heartbeat yet.
+  const hasStream = r.stream !== undefined && r.stream !== null;
+  const stream = hasStream
+    ? normalizePlaybackStream(r.stream)
+    : r.max_seekable_bytes !== undefined
+      ? normalizePlaybackStream(r) // flattened fallback
+      : null;
+
   const response: PlaybackResponse = {
     media_id: id(r.media_id ?? r.mediaId ?? r.id),
-    file_id: id(r.file_id ?? r.fileId ?? r.task_file_id),
-    video: normalizePlaybackVideo(r.video),
+    file_id: id(
+      r.file_id ??
+        r.fileId ??
+        r.task_file_id ??
+        video.task_file_id ??
+        asRaw(r.video).task_file_id,
+    ),
+    video,
     audio_tracks: Array.isArray(r.audio_tracks)
       ? r.audio_tracks.map(normalizePlaybackAudioTrack)
       : [],
@@ -319,13 +363,35 @@ export function normalizePlayback(raw: unknown): PlaybackResponse {
       : Array.isArray(r.subtitles)
         ? r.subtitles.map(normalizePlaybackSubtitleTrack)
         : [],
-    stream: normalizePlaybackStream(streamRaw),
+    stream,
   };
-  // Tolerate stream fields at the top level (flattened payloads).
-  if (response.stream.max_seekable_bytes === 0 && r.max_seekable_bytes !== undefined) {
-    response.stream = normalizePlaybackStream({ ...streamRaw, ...r });
+
+  const episodeId = strOrNull(r.episode_id ?? r.episodeId);
+  if (episodeId !== undefined) response.episode_id = episodeId;
+  const title = strOrNull(r.title);
+  if (title !== undefined) response.title = title;
+  const kind = strOrNull(r.kind);
+  if (kind !== undefined) response.kind = kind;
+  const season = optNum(r.season);
+  if (season !== undefined) response.season = season;
+  const episode = optNum(r.episode);
+  if (episode !== undefined) response.episode = episode;
+  const episodeEnd = optNum(r.episode_end ?? r.episodeEnd);
+  if (episodeEnd !== undefined) response.episode_end = episodeEnd;
+  const durationMs = optNum(r.duration_ms ?? r.durationMs);
+  if (durationMs !== undefined) response.duration_ms = durationMs;
+  // Top-level duration feeds the seek ceiling when video.duration_ms is null.
+  if (response.duration_ms != null && response.video.duration_ms == null) {
+    response.video.duration_ms = response.duration_ms;
   }
+
   const catalog = normalizePlaybackCatalog(r.catalog);
   if (catalog) response.catalog = catalog;
+  // Derive a minimal catalog from top-level series fields when absent.
+  if (!response.catalog && (response.kind === "series" || response.season != null)) {
+    if (response.kind === "series") {
+      response.catalog = { kind: "series" };
+    }
+  }
   return response;
 }
