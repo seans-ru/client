@@ -5,6 +5,7 @@
  *   GET  /api/auth/me
  *   GET  /api/files/{task_file_id}/url
  *   GET  /api/search?q=
+ *   GET  /api/catalog/chart?type=&limit=
  *   GET  /api/media/{id}
  *   GET  /api/media/{id}/releases?refresh=
  *   PUT  /api/media/{id}/review
@@ -80,6 +81,51 @@ export async function searchMedia(
   return normalizeSearchResults(
     await request<unknown>("/api/search", { query: { q: query }, signal }),
   );
+}
+
+/**
+ * GET /api/catalog/chart — chart shelf for the Home hero.
+ * The Seans backend proxies Kinopoisk collections (e.g. POPULAR_SERIES).
+ * Missing/empty payload is normal (no posters); callers must not block search.
+ */
+export async function fetchChart(
+  options: {
+    type?: "popular_series" | "popular_films" | string;
+    limit?: number;
+    signal?: AbortSignal;
+  } = {},
+): Promise<MediaSearchResult[]> {
+  const limit = toNumber(options.limit);
+  const clamped =
+    limit === null ? 20 : Math.min(50, Math.max(1, Math.trunc(limit)));
+  return normalizeSearchResults(
+    await request<unknown>("/api/catalog/chart", {
+      query: {
+        type: options.type ?? "popular_series",
+        limit: clamped,
+      },
+      signal: options.signal,
+    }),
+  );
+}
+
+/**
+ * DELETE /api/library/{library_item_id} — remove a library entry.
+ * `deleteFiles` also drops stored file bytes when the backend supports it.
+ */
+export async function deleteLibraryItem(
+  libraryItemId: ApiId,
+  options: { deleteFiles?: boolean; signal?: AbortSignal } = {},
+): Promise<void> {
+  const id = encodeURIComponent(String(libraryItemId));
+  await request<unknown>(`/api/library/${id}`, {
+    method: "DELETE",
+    query:
+      options.deleteFiles === undefined
+        ? undefined
+        : { delete_files: options.deleteFiles ? "true" : "false" },
+    signal: options.signal,
+  });
 }
 
 /** GET /api/media/{id} — full media detail (includes optional user_review). */

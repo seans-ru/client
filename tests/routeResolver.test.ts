@@ -5,6 +5,7 @@ import {
   matchMediaRoute,
   matchPlayerRoute,
   matchRoomRoute,
+  resolveLegacyRoute,
   resolveRoute,
   resolveRouteFromDeepLink,
   ROUTES,
@@ -142,5 +143,25 @@ describe("isFullBleedRoute", () => {
     expect(isFullBleedRoute("#/account")).toBe(false);
     expect(isFullBleedRoute("#/tasks")).toBe(false);
     expect(isFullBleedRoute("#/history")).toBe(false);
+  });
+});
+
+describe("resolveLegacyRoute", () => {
+  it("redirects tasks and history into the library hub", () => {
+    expect(resolveLegacyRoute(ROUTES.tasks)).toBe(ROUTES.library);
+    expect(resolveLegacyRoute(ROUTES.history)).toBe(ROUTES.library);
+  });
+
+  it("redirects account into settings", () => {
+    expect(resolveLegacyRoute(ROUTES.account)).toBe(ROUTES.settings);
+  });
+
+  it("returns null for live destinations", () => {
+    expect(resolveLegacyRoute(ROUTES.home)).toBeNull();
+    expect(resolveLegacyRoute(ROUTES.library)).toBeNull();
+    expect(resolveLegacyRoute(ROUTES.settings)).toBeNull();
+    expect(resolveLegacyRoute(ROUTES.media(9))).toBeNull();
+    expect(resolveLegacyRoute(ROUTES.player(3))).toBeNull();
+    expect(resolveLegacyRoute(ROUTES.room("ABCD2345"))).toBeNull();
   });
 });

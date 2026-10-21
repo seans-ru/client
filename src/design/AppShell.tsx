@@ -1,8 +1,8 @@
 /**
- * App chrome (M3): left navigation + content area.
+ * App chrome: three destinations (Home, Library, Settings).
  *
  * Player and room routes are full-bleed (no nav) — see `isFullBleedRoute`.
- * Theme switcher and account/logout live in the nav footer.
+ * Account lives inside Settings; dark-only violet palette (no theme cycler).
  */
 
 import { useEffect } from "react";
@@ -10,8 +10,6 @@ import type { ReactNode } from "react";
 import { useAuth } from "../features/auth";
 import { UpdateBanner } from "../features/updater";
 import { ROUTES, isFullBleedRoute } from "../lib/routeResolver";
-import { themeLabel } from "./theme";
-import { useThemePreference } from "./useTheme";
 import { Button } from "./primitives";
 
 type NavItem = { href: string; label: string };
@@ -19,26 +17,8 @@ type NavItem = { href: string; label: string };
 export const NAV_ITEMS: readonly NavItem[] = [
   { href: ROUTES.home, label: "Главная" },
   { href: ROUTES.library, label: "Библиотека" },
-  { href: ROUTES.tasks, label: "Задачи" },
-  { href: ROUTES.history, label: "История" },
   { href: ROUTES.settings, label: "Настройки" },
-  { href: ROUTES.account, label: "Аккаунт" },
 ];
-
-function ThemeSwitcher() {
-  const { preference, cycle } = useThemePreference();
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="nav-theme"
-      onClick={cycle}
-      title="Сменить тему оформления"
-    >
-      Тема: {themeLabel(preference)}
-    </Button>
-  );
-}
 
 function NavFooter() {
   const { user, logout } = useAuth();
@@ -46,10 +26,9 @@ function NavFooter() {
 
   return (
     <footer className="nav-footer">
-      <ThemeSwitcher />
       {name ? (
         <>
-          <a className="nav-user" href={ROUTES.account} title={name}>
+          <a className="nav-user" href={ROUTES.settings} title={name}>
             {name}
           </a>
           <Button variant="ghost" size="sm" onClick={() => void logout()}>

@@ -14,6 +14,8 @@ export type UserResponse = {
   display_name: string;
   can_invite: boolean;
   quota_bytes: number;
+  /** Optional server-side usage; else client sums library total_size. */
+  used_bytes?: number;
   created_at: string;
 };
 
