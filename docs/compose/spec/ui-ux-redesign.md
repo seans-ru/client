@@ -115,6 +115,36 @@ Order: **Аккаунт** (name, email, logout, quota ProgressBar using `user.us
 
 Existing endpoints used unchanged. Optional task join fields (`media_id`, `task_file_id`) unlock per-card download chips.
 
+### Backend TODO (server handoff)
+
+Клиент уже ходит по этим контрактам; без backend соответствующие куски UI деградируют мягко.
+
+1. **`GET /api/catalog/chart`** (must-have для hero)
+   - Query: `type` (`popular_series` / `popular_films` / …), `limit` (клиент шлёт 1..50, default 20).
+   - Response: `MediaSearchResult[]` — `id`, `kp_id`, `title`, `year`, `poster_url`, `kp_type`, `rating_kp`.
+   - Реализация: прокси Kinopoisk Unofficial `GET /api/v2.2/films/collections?type=POPULAR_SERIES` (или свой кэш на N минут). Ключ API — на сервере, не в клиенте.
+   - Допустимо: `404` / `[]` при недоступности Kinopoisk — hero станет пустым, поиск продолжит работать.
+   - Клиентский код: `src/features/catalog/useChart.ts`, `fetchChart` в `src/api/endpoints.ts`.
+
+2. **`DELETE /api/library/{library_item_id}`** (must-have для «Удалить»)
+   - Query: `delete_files=true|false` (клиент сейчас шлёт `false` — убрать запись, файлы не трогать).
+   - Response: `204` или `{ok: true}`. `404` если уже нет — клиент покажет ошибку на карточке.
+   - Права: только владелец library item; иначе `403`.
+   - Клиентский код: `deleteLibraryItem` в `src/api/endpoints.ts`.
+
+3. **`GET /api/auth/me` → `used_bytes`** (nice-to-have для полоски квоты)
+   - Сейчас клиент: `used_bytes` если есть, иначе сумма `library[].total_size`.
+   - Лучше отдавать фактическое использование (включая не-файловый оверхед) в `UserResponse.used_bytes` (number). `quota_bytes` уже есть.
+
+4. **`GET /api/tasks` → join-поля** (nice-to-have для чипов на карточках)
+   - Добавить в `TaskDetailResponse` одно из: `media_id` / `media_item_id` и/или `task_file_id`.
+   - Без них клиент показывает общий блок «Активные загрузки» в Библиотеке (уже так), но не прикрепляет прогресс к карточке медиа.
+
+5. **Не требуется для этого редизайна** (клиент уже готов)
+   - Releases → `POST /api/tasks` для «Скачать другую озвучку/качество» — существующий флоу, `#/media/{id}`.
+   - History continue / next episode — `GET /api/history` + `PUT /api/history`.
+   - Rooms — без изменений.
+
 ### Error / edge behavior
 
 - Chart fetch fail → empty chart, search works.
