@@ -1,27 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
-import {
-  applyTheme,
-  getTheme,
-  nextTheme,
-  setTheme,
-} from "./theme";
-import type { ThemePreference } from "./theme";
+import { useEffect } from "react";
+import { applyTheme, setTheme } from "./theme";
 
-/** React binding for the theme preference (M3). */
+/**
+ * Dark-only product: force `data-theme="dark"` on mount.
+ * Preference helpers in `theme.ts` stay for storage compatibility.
+ */
 export function useThemePreference(): {
-  preference: ThemePreference;
+  preference: "dark";
   cycle: () => void;
 } {
-  const [preference, setPreference] = useState<ThemePreference>(() => getTheme());
-
   useEffect(() => {
-    setTheme(preference);
-    applyTheme(preference);
-  }, [preference]);
-
-  const cycle = useCallback(() => {
-    setPreference((current) => nextTheme(current));
+    setTheme("dark");
+    applyTheme("dark");
   }, []);
 
-  return { preference, cycle };
+  return { preference: "dark", cycle: () => undefined };
 }

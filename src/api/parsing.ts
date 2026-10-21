@@ -75,12 +75,14 @@ function id(value: unknown): string | number {
 
 export function normalizeUser(raw: unknown): UserResponse {
   const r = asRaw(raw);
+  const used = toNumber(r.used_bytes);
   return {
     id: id(r.id),
     email: str(r.email),
     display_name: str(r.display_name),
     can_invite: bool(r.can_invite),
     quota_bytes: num(r.quota_bytes),
+    ...(used === null ? {} : { used_bytes: used }),
     created_at: str(r.created_at),
   };
 }

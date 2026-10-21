@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { AccountScreen } from "./screens/AccountScreen";
-import { HistoryScreen } from "./screens/HistoryScreen";
 import { HomeScreen } from "./screens/HomeScreen";
 import { LibraryScreen } from "./screens/LibraryScreen";
 import { LoginScreen } from "./screens/LoginScreen";
@@ -9,13 +7,13 @@ import { MediaScreen } from "./screens/MediaScreen";
 import { PlayerScreen } from "./screens/PlayerScreen";
 import { RoomScreen } from "./screens/RoomScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
-import { TasksScreen } from "./screens/TasksScreen";
 import { parseDeepLink } from "./lib/deepLink";
 import {
   getCurrentHashRoute,
   matchMediaRoute,
   matchPlayerRoute,
   matchRoomRoute,
+  resolveLegacyRoute,
   resolveRoute,
   ROUTES,
 } from "./lib/routeResolver";
@@ -76,33 +74,33 @@ function renderScreen(route: string): ReactNode {
   if (fileId) return <PlayerScreen fileId={fileId} />;
 
   if (route === ROUTES.library) return <LibraryScreen />;
-  if (route === ROUTES.tasks) return <TasksScreen />;
-  if (route === ROUTES.history) return <HistoryScreen />;
   if (route === ROUTES.settings) return <SettingsScreen />;
-  if (route === ROUTES.account) return <AccountScreen />;
 
   return <HomeScreen />;
 }
 
 /**
- * Hash router, gated on auth:
- *   #/                home
- *   #/login           auth gate (always reachable — also serves account/logout)
- *   #/library         library placeholder
- *   #/tasks           tasks placeholder
- *   #/history         continue-watching history (M9)
- *   #/settings        settings placeholder
- *   #/account         account placeholder
- *   #/media/:id       media detail placeholder
- *   #/player/:fileId  player placeholder (full-bleed, no left nav)
- *   #/room/:code      room placeholder (full-bleed, no left nav)
- * Anything else renders home. Anonymous users only see #/login.
+ * Hash router, gated on auth (three destinations):
+ *   #/                home (chart hero + search)
+ *   #/library         media hub (continue, next episode, downloads, rooms)
+ *   #/settings        account + preferences + updates
+ *   #/login           auth gate
+ *   #/media/:id       media detail
+ *   #/player/:fileId  player (full-bleed)
+ *   #/room/:code      watch party (full-bleed)
+ * Legacy `#/tasks` `#/history` → library; `#/account` → settings.
+ * Anonymous users only see #/login.
  */
 function Router() {
   const route = useHashRoute();
   const { status } = useAuth();
 
   useEffect(() => {
+    const legacy = resolveLegacyRoute(route);
+    if (legacy && route !== legacy) {
+      navigate(legacy);
+      return;
+    }
     if (status === "anonymous" && route !== ROUTES.login) {
       navigate(ROUTES.login);
     }

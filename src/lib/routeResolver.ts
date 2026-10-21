@@ -16,6 +16,16 @@ export const ROUTES = {
 } as const;
 
 /**
+ * Legacy hashes land in the new three-destination IA:
+ * tasks/history → library hub, account → settings (account block).
+ */
+export function resolveLegacyRoute(hash: string): string | null {
+  if (hash === ROUTES.tasks || hash === ROUTES.history) return ROUTES.library;
+  if (hash === ROUTES.account) return ROUTES.settings;
+  return null;
+}
+
+/**
  * Map a parsed deep-link payload to a hash route path.
  * Auth callback lands on home; the tokens themselves are handled separately
  * (emitted in memory only) and must not be persisted by routing code.

@@ -1,14 +1,13 @@
 /*
- * Design tokens (M3).
+ * Design tokens — dark home theater (ui-ux-redesign).
  *
- * Theme preference is applied via `data-theme` on <html>:
- *   (absent) | "system" → follow prefers-color-scheme
- *   "light" | "dark"    → force that palette
- * Never store tokens in localStorage — only the preference (see theme.ts).
+ * Dark-only violet palette. Token names are stable so primitives/screens
+ * restyle without a second design system. `data-theme` on <html> is forced
+ * to `dark` for player-chrome compatibility; light palettes are gone.
  */
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 
   /* Type */
   --font-ui: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -42,67 +41,39 @@
   /* JacRed brand (attribution link, theme-independent) */
   --jacred: #c72d33;
 
-  /* Light palette (deep teal accent) */
-  --bg: #f6f7f9;
-  --bg-elevated: #ffffff;
-  --bg-sunken: #e9ecf1;
-  --bg-hover: rgba(20, 22, 26, 0.06);
-  --ink: #14161a;
-  --ink-muted: #5c6370;
-  --accent: #0f766e;
-  --accent-ink: #ffffff;
-  --accent-soft: rgba(15, 118, 110, 0.12);
-  --danger: #d93025;
-  --danger-ink: #ffffff;
-  --border: #d8dce3;
-  --overlay: rgba(20, 22, 26, 0.45);
-  --shadow-1: 0 1px 2px rgba(20, 22, 26, 0.06), 0 4px 12px rgba(20, 22, 26, 0.06);
-  --shadow-2: 0 8px 32px rgba(20, 22, 26, 0.16);
+  /* Dark violet / purple home-theater palette */
+  --bg: #0b0c10;
+  --bg-elevated: #14161d;
+  --bg-sunken: #08090c;
+  --bg-hover: rgba(242, 241, 247, 0.08);
+  --ink: #f2f1f7;
+  --ink-muted: #9a96a8;
+  --accent: #8b7cf6;
+  --accent-ink: #0b0c10;
+  --accent-soft: rgba(139, 124, 246, 0.18);
+  --danger: #f07178;
+  --danger-ink: #0b0c10;
+  --border: #2a2c36;
+  --overlay: rgba(8, 9, 12, 0.72);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 8px 32px rgba(0, 0, 0, 0.5);
+
+  /* Hero scrim for Home chart backdrop */
+  --hero-scrim: linear-gradient(
+    180deg,
+    rgba(11, 12, 16, 0.35) 0%,
+    rgba(11, 12, 16, 0.55) 45%,
+    rgba(11, 12, 16, 0.92) 78%,
+    #0b0c10 100%
+  );
 
   /* Focus ring color follows accent */
   --focus-color: var(--accent);
 }
 
-/* Forced dark (explicit preference). */
+/* Keep the attribute for player-chrome / future themes. */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #121418;
-  --bg-elevated: #1b1e24;
-  --bg-sunken: #0c0e12;
-  --bg-hover: rgba(238, 241, 246, 0.08);
-  --ink: #eef1f6;
-  --ink-muted: #9aa3b2;
-  --accent: #2dd4bf;
-  --accent-ink: #042f2e;
-  --accent-soft: rgba(45, 212, 191, 0.16);
-  --danger: #f28b82;
-  --danger-ink: #3b0a07;
-  --border: #2c313a;
-  --overlay: rgba(0, 0, 0, 0.55);
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-2: 0 8px 32px rgba(0, 0, 0, 0.5);
-}
-
-/* System dark (no forced light). */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --bg: #121418;
-    --bg-elevated: #1b1e24;
-    --bg-sunken: #0c0e12;
-    --bg-hover: rgba(238, 241, 246, 0.08);
-    --ink: #eef1f6;
-    --ink-muted: #9aa3b2;
-    --accent: #2dd4bf;
-    --accent-ink: #042f2e;
-    --accent-soft: rgba(45, 212, 191, 0.16);
-    --danger: #f28b82;
-    --danger-ink: #3b0a07;
-    --border: #2c313a;
-    --overlay: rgba(0, 0, 0, 0.55);
-    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.35);
-    --shadow-2: 0 8px 32px rgba(0, 0, 0, 0.5);
-  }
 }
 
 html,
