@@ -3,7 +3,7 @@ feature: ui-ux-redesign
 status: delivered
 updated: 2026-10-16
 branch: feat/ui-ux-redesign
-commits: f20e21b..f20e21b # working tree ready; fill after feature commit
+commits: f20e21b..39f8daf
 ---
 
 # UI/UX Redesign — Home, Library, Settings
