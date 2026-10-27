@@ -1,26 +1,22 @@
 /**
- * Overlay transport controls for the libmpv surface (M7 + progressive).
- * Russian labels; token-only styling via `player.css` classes.
+ * Slim transport bar under the video (Sidecar layout).
+ * Russian labels; token-only styling via `player.css`.
  *
  * Seek rail zones (progressive):
- *   [accent] downloaded position fill
- *   [lighter] contiguous seekable prefix (`percent_seekable`)
- *   [grey] future / not yet downloaded
+ *   [accent] playback position fill
+ *   [teal]   contiguous downloaded / seekable prefix
+ *   [grey]   future / not yet downloadable
  * Seeks past the seekable prefix are not sent to the transport.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
 import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
-import { Button } from "../../design/primitives";
-import { ChaptersMenu, SeekMarkers } from "../theintrodb/SegmentChrome";
+import { SeekMarkers } from "../theintrodb/SegmentChrome";
 import type { SegmentMarker } from "../theintrodb/types";
 import type { PlaybackAudioOption } from "./usePlayback";
 import {
   formatTime,
-  formatTrackId,
   formatTrackLabel,
-  parseTrackId,
   positionPercent,
   ratioToPosition,
   SPEED_OPTIONS,
@@ -30,12 +26,13 @@ import type { DownloadProgress, PlaybackMode, SeekLimit } from "./progressiveHel
 import {
   checkSeek,
   downloadedRailRatio,
+  formatProgressLabels,
+  formatSeekableUntil,
   seekableRailRatio,
 } from "./progressiveHelpers";
 
 export type PlayerControlsProps = {
   snapshot: PlayerSnapshot;
-  visible: boolean;
   onSeek: (seconds: number) => void;
   onTogglePause: () => void;
   onSetSpeed: (speed: number) => void;
@@ -49,9 +46,6 @@ export type PlayerControlsProps = {
   /** Chapter rows for the «Главы» menu. */
   chapters?: SegmentMarker[];
   onSeekChapter?: (seconds: number) => void;
-  hwdecLabel: string;
-  /** Embed diagnostic: `vo=… · WxH`. */
-  voDebug?: string;
   /** Progressive mode (`waiting` / `progressive` / `vod`). */
   mode?: PlaybackMode;
   /** Dual progress for the rail zones. */
@@ -66,8 +60,6 @@ export type PlayerControlsProps = {
   selectedAudioId?: string | null;
   /** Playback-level audio change (persists preference). */
   onSelectPlaybackAudio?: (trackId: string | number) => void;
-  /** Series episode `<select>` slot (rendered by PlayerSurface). */
-  episodeSlot?: ReactNode;
 };
 
 function useDragSeek(
@@ -165,9 +157,259 @@ function useDragSeek(
   return { railRef, dragging, dragPercent, onPointerDown };
 }
 
+/* ----------------------------------------------------------------- icons */
+
+function PlayIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <path d="M5 3.5v11l10-5.5z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <rect x="4" y="3.5" width="3.5" height="11" rx="1" fill="currentColor" />
+      <rect x="10.5" y="3.5" width="3.5" height="11" rx="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+function VolumeIcon({ muted }: { muted: boolean }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <path d="M3 7h3l4-3v10l-4-3H3z" fill="currentColor" />
+      {muted ? (
+        <path d="M12 6.5l4 5m0-5l-4 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+      ) : (
+        <path d="M12 6c1.2 1 1.2 5 0 6M14 4.5c2 1.8 2 7.2 0 9" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+      )}
+    </svg>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <circle cx="9" cy="9" r="2.4" stroke="currentColor" strokeWidth="1.5" fill="none" />
+      <path
+        d="M9 2.2v2M9 13.8v2M2.2 9h2M13.8 9h2M4.2 4.2l1.4 1.4M12.4 12.4l1.4 1.4M13.8 4.2l-1.4 1.4M5.6 12.4l-1.4 1.4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function FullscreenIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      {active ? (
+        <path
+          d="M7 2.5H2.5V7M11 15.5h4.5V11M2.5 11v4.5H7M15.5 7V2.5H11"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          fill="none"
+          strokeLinecap="round"
+        />
+      ) : (
+        <path
+          d="M2.5 6.5v-4h4M11.5 2.5h4v4M15.5 11.5v4h-4M6.5 15.5h-4v-4"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          fill="none"
+          strokeLinecap="round"
+        />
+      )}
+    </svg>
+  );
+}
+
+/* ---------------------------------------------------------- settings menu */
+
+function SettingsMenu({
+  snapshot,
+  onSetSpeed,
+  audioTracks,
+  selectedAudio,
+  onSetAudioTrack,
+  subTracks,
+  selectedSub,
+  onSetSubtitleTrack,
+  audioOptions,
+  selectedAudioId,
+  onSelectPlaybackAudio,
+  chapters,
+  onSeekChapter,
+}: {
+  snapshot: PlayerSnapshot;
+  onSetSpeed: (speed: number) => void;
+  audioTracks: PlayerSnapshot["tracks"];
+  selectedAudio: number;
+  onSetAudioTrack: (id: number) => void;
+  subTracks: PlayerSnapshot["tracks"];
+  selectedSub: number;
+  onSetSubtitleTrack: (id: number | null) => void;
+  audioOptions?: PlaybackAudioOption[];
+  selectedAudioId?: string | null;
+  onSelectPlaybackAudio?: (trackId: string | number) => void;
+  chapters?: SegmentMarker[];
+  onSeekChapter?: (seconds: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const productAudio = audioOptions && audioOptions.length > 0;
+  const productSelected = selectedAudioId ?? String(audioOptions?.[0]?.track.id ?? "");
+
+  return (
+    <div className="player-menu" ref={rootRef}>
+      <button
+        type="button"
+        className="player-icon-btn"
+        aria-label="Настройки воспроизведения"
+        aria-expanded={open}
+        title="Настройки"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <GearIcon />
+      </button>
+      {open ? (
+        <div className="player-menu-panel" role="menu">
+          <section>
+            <h4 className="player-menu-title">Скорость</h4>
+            <div className="player-menu-row">
+              {SPEED_OPTIONS.map((speed) => (
+                <button
+                  key={speed}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={speed === snapshot.speed}
+                  className={`player-chip${speed === snapshot.speed ? " player-chip-active" : ""}`}
+                  onClick={() => onSetSpeed(speed)}
+                >
+                  {speed}×
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <h4 className="player-menu-title">
+              {productAudio ? "Озвучка" : "Аудио"}
+            </h4>
+            <div className="player-menu-list">
+              {productAudio ? (
+                audioOptions!.map((option) => (
+                  <button
+                    key={String(option.track.id)}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={String(option.track.id) === productSelected}
+                    className={`player-menu-item${String(option.track.id) === productSelected ? " player-menu-item-active" : ""}`}
+                    onClick={() => onSelectPlaybackAudio?.(option.track.id)}
+                  >
+                    {option.label}
+                  </button>
+                ))
+              ) : audioTracks.length === 0 ? (
+                <p className="player-menu-empty">—</p>
+              ) : (
+                audioTracks.map((track) => (
+                  <button
+                    key={track.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={track.id === selectedAudio}
+                    className={`player-menu-item${track.id === selectedAudio ? " player-menu-item-active" : ""}`}
+                    onClick={() => onSetAudioTrack(track.id)}
+                  >
+                    {formatTrackLabel(track)}
+                  </button>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section>
+            <h4 className="player-menu-title">Субтитры</h4>
+            <div className="player-menu-list">
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={selectedSub <= 0}
+                className={`player-menu-item${selectedSub <= 0 ? " player-menu-item-active" : ""}`}
+                onClick={() => onSetSubtitleTrack(null)}
+              >
+                Выкл
+              </button>
+              {subTracks.map((track) => (
+                <button
+                  key={track.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={track.id === selectedSub}
+                  className={`player-menu-item${track.id === selectedSub ? " player-menu-item-active" : ""}`}
+                  onClick={() => onSetSubtitleTrack(track.id)}
+                >
+                  {formatTrackLabel(track)}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {chapters && chapters.length > 0 && onSeekChapter ? (
+            <section>
+              <h4 className="player-menu-title">Главы</h4>
+              <div className="player-menu-list">
+                {chapters.map((marker) => (
+                  <button
+                    key={`${marker.type}-${marker.startMs}`}
+                    type="button"
+                    role="menuitem"
+                    className="player-menu-item"
+                    onClick={() => {
+                      onSeekChapter(marker.startMs / 1000);
+                      setOpen(false);
+                    }}
+                  >
+                    <span className="player-menu-item-label">{marker.label}</span>
+                    <span className="player-menu-item-meta">
+                      {formatTime(marker.startMs / 1000)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- transport */
+
 export function PlayerControls({
   snapshot,
-  visible,
   onSeek,
   onTogglePause,
   onSetSpeed,
@@ -179,8 +421,6 @@ export function PlayerControls({
   markers,
   chapters,
   onSeekChapter,
-  hwdecLabel,
-  voDebug,
   mode = "vod",
   progress,
   limit,
@@ -188,7 +428,6 @@ export function PlayerControls({
   audioOptions,
   selectedAudioId,
   onSelectPlaybackAudio,
-  episodeSlot,
 }: PlayerControlsProps) {
   const duration = snapshot.duration;
   const percent = snapshot.file_loaded
@@ -217,17 +456,21 @@ export function PlayerControls({
         ? downloadedRailRatio(progress) * 100
         : percent;
 
-  // Product audio menu (flags → Russian labels) when playback is available.
-  const productAudio = audioOptions && audioOptions.length > 0;
-  const productSelected =
-    selectedAudioId ?? String(audioOptions?.[0]?.track.id ?? "");
+  const progressLabels = mode === "vod" ? null : formatProgressLabels(progress ?? { percentDownloaded: 0, percentSeekable: 0 });
+  const seekableUntil = mode === "vod" ? null : formatSeekableUntil(limit ?? { maxSeekableSec: null, seekableRatio: null, durationSec: null });
 
   return (
-    <div
-      className={`player-controls${visible ? " player-controls-visible" : ""}`}
-      role="group"
-      aria-label="Управление воспроизведением"
-    >
+    <div className="player-transport" role="group" aria-label="Управление воспроизведением">
+      {progressLabels ? (
+        <div className="player-transport-hint" role="status">
+          <span title="Объём, который уже на сервере">{progressLabels.downloaded}</span>
+          <span className="player-transport-hint-seekable" title="Моменты, куда уже можно перематывать">
+            {progressLabels.seekable}
+            {seekableUntil ? ` · ${seekableUntil}` : ""}
+          </span>
+        </div>
+      ) : null}
+
       <div
         className={`player-seek${mode === "progressive" ? " player-seek-progressive" : ""}`}
         ref={railRef}
@@ -257,148 +500,70 @@ export function PlayerControls({
         </div>
       </div>
 
-      <div className="player-controls-row">
-        <div className="player-controls-left">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onTogglePause}
-            aria-label={snapshot.pause ? "Воспроизвести" : "Пауза"}
-            title={snapshot.pause ? "Воспроизвести (Пробел)" : "Пауза (Пробел)"}
-          >
-            {snapshot.pause ? "▶" : "❚❚"}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onToggleMute}
-            aria-label={snapshot.mute ? "Включить звук" : "Выключить звук"}
-            title="Звук (M)"
-          >
-            {snapshot.mute ? "🔇" : "🔊"}
-          </Button>
-          <input
-            className="player-volume"
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={Math.round(snapshot.mute ? 0 : snapshot.volume)}
-            onChange={(event) => onSetVolume(Number(event.target.value))}
-            aria-label="Громкость"
-            title="Громкость (↑ / ↓)"
-          />
-          <span className="player-time">
-            {formatTime(snapshot.position)} / {formatTime(duration)}
-          </span>
-        </div>
+      <div className="player-transport-row">
+        <button
+          type="button"
+          className="player-icon-btn player-icon-btn-primary"
+          onClick={onTogglePause}
+          aria-label={snapshot.pause ? "Воспроизвести" : "Пауза"}
+          title={snapshot.pause ? "Воспроизвести (Пробел)" : "Пауза (Пробел)"}
+        >
+          {snapshot.pause ? <PlayIcon /> : <PauseIcon />}
+        </button>
 
-        <div className="player-controls-right">
-          {episodeSlot}
+        <span className="player-time">
+          {formatTime(snapshot.position)}
+          <span className="player-time-muted"> / {formatTime(duration)}</span>
+        </span>
 
-          <label className="player-select-wrap">
-            <span className="player-select-label">Скорость</span>
-            <select
-              className="player-select"
-              value={String(snapshot.speed)}
-              onChange={(event) => onSetSpeed(Number(event.target.value))}
-              aria-label="Скорость воспроизведения"
-            >
-              {SPEED_OPTIONS.map((speed) => (
-                <option key={speed} value={String(speed)}>
-                  {speed}×
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="player-transport-spacer" />
 
-          <label className="player-select-wrap">
-            <span className="player-select-label">Аудио</span>
-            {productAudio ? (
-              <select
-                className="player-select"
-                value={productSelected}
-                onChange={(event) => {
-                  onSelectPlaybackAudio?.(event.target.value);
-                }}
-                aria-label="Озвучка"
-              >
-                {audioOptions!.map((option) => (
-                  <option
-                    key={String(option.track.id)}
-                    value={String(option.track.id)}
-                  >
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <select
-                className="player-select"
-                value={formatTrackId("audio", selectedAudio)}
-                onChange={(event) => {
-                  const { id } = parseTrackId(event.target.value);
-                  onSetAudioTrack(id);
-                }}
-                aria-label="Аудиодорожка"
-              >
-                {audioTracks.length === 0 ? (
-                  <option value="audio:0">—</option>
-                ) : (
-                  audioTracks.map((track) => (
-                    <option
-                      key={track.id}
-                      value={formatTrackId("audio", track.id)}
-                    >
-                      {formatTrackLabel(track)}
-                    </option>
-                  ))
-                )}
-              </select>
-            )}
-          </label>
+        <button
+          type="button"
+          className="player-icon-btn"
+          onClick={onToggleMute}
+          aria-label={snapshot.mute ? "Включить звук" : "Выключить звук"}
+          title="Звук (M)"
+        >
+          <VolumeIcon muted={snapshot.mute} />
+        </button>
+        <input
+          className="player-volume"
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={Math.round(snapshot.mute ? 0 : snapshot.volume)}
+          onChange={(event) => onSetVolume(Number(event.target.value))}
+          aria-label="Громкость"
+          title="Громкость (↑ / ↓)"
+        />
 
-          <label className="player-select-wrap">
-            <span className="player-select-label">Субтитры</span>
-            <select
-              className="player-select"
-              value={formatTrackId("sub", selectedSub)}
-              onChange={(event) => {
-                const { id } = parseTrackId(event.target.value);
-                onSetSubtitleTrack(id > 0 ? id : null);
-              }}
-              aria-label="Субтитры"
-            >
-              <option value="sub:0">Выкл</option>
-              {subTracks.map((track) => (
-                <option key={track.id} value={formatTrackId("sub", track.id)}>
-                  {formatTrackLabel(track)}
-                </option>
-              ))}
-            </select>
-          </label>
+        <SettingsMenu
+          snapshot={snapshot}
+          onSetSpeed={onSetSpeed}
+          audioTracks={audioTracks}
+          selectedAudio={selectedAudio}
+          onSetAudioTrack={onSetAudioTrack}
+          subTracks={subTracks}
+          selectedSub={selectedSub}
+          onSetSubtitleTrack={onSetSubtitleTrack}
+          audioOptions={audioOptions}
+          selectedAudioId={selectedAudioId}
+          onSelectPlaybackAudio={onSelectPlaybackAudio}
+          chapters={chapters}
+          onSeekChapter={onSeekChapter}
+        />
 
-          <ChaptersMenu
-            markers={chapters ?? []}
-            onSeekMs={(ms) => onSeekChapter?.(ms / 1000)}
-            disabled={!onSeekChapter}
-          />
-
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onToggleFullscreen}
-            aria-label={snapshot.fullscreen ? "Выйти из полноэкранного режима" : "Полный экран"}
-            title="Полный экран (F)"
-          >
-            {snapshot.fullscreen ? "⤡" : "⛶"}
-          </Button>
-        </div>
-      </div>
-
-      <div className="player-hwdec" title="Режим декодирования">
-        {hwdecLabel}
-        {voDebug ? <span> · {voDebug}</span> : null}
+        <button
+          type="button"
+          className="player-icon-btn"
+          onClick={onToggleFullscreen}
+          aria-label={snapshot.fullscreen ? "Выйти из полноэкранного режима" : "Полный экран"}
+          title="Полный экран (F)"
+        >
+          <FullscreenIcon active={snapshot.fullscreen} />
+        </button>
       </div>
     </div>
   );

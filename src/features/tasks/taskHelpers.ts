@@ -57,8 +57,11 @@ export type TaskCreatePayload = {
  * File selection:
  * - explicit `selectedPaths` wins (user picked files);
  * - else the release's own `file_paths` (all of them) when the API provided a list;
- * - else `file_paths: []`, which is the documented default full-torrent selection
- *   (the API downloads every file in the release).
+ * - else `file_paths: []`, which is the documented default full-torrent selection.
+ *
+ * Note: the current Seans backend accepts `file_paths` but does not filter the
+ * torrent with it (workers get an empty list). Sending paths is forward-compatible;
+ * today the server downloads the full torrent either way.
  */
 export function buildTaskCreateBody(
   release: Pick<TorrentReleaseResponse, "id" | "file_paths">,

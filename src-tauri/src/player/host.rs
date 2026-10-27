@@ -20,9 +20,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_EX_TRANSPARENT, WS_VISIBLE,
 };
 
-/// Height reserved for the HTML control bar + skip buttons (webview shows here).
-/// The video host sits above this strip; `WS_EX_TRANSPARENT` lets clicks fall
-/// through to HTML that happens to overlap the video rect.
+/// Height reserved for the HTML control bar when no DOM video rect has been
+/// supplied yet (fallback only — the frontend always sends the real rect).
 pub const CONTROL_STRIP_PX: i32 = 160;
 
 const HOST_CLASS: &str = "SeansMpvHost";
@@ -33,6 +32,9 @@ static CLASS_REGISTERED: AtomicBool = AtomicBool::new(false);
 pub struct HostWindow {
     hwnd: HWND,
     parent: HWND,
+    /// Last video-area rect from the DOM (client coords, physical px).
+    /// `None` → legacy fit: full parent width minus `CONTROL_STRIP_PX`.
+    video_rect: Option<(i32, i32, i32, i32)>,
 }
 
 fn wide_null(s: &str) -> Vec<u16> {
@@ -136,7 +138,11 @@ impl HostWindow {
             ShowWindow(hwnd, SW_SHOW);
         }
 
-        let host = HostWindow { hwnd, parent };
+        let host = HostWindow {
+            hwnd,
+            parent,
+            video_rect: None,
+        };
         host.fit_parent();
         Ok(host)
     }
@@ -145,11 +151,24 @@ impl HostWindow {
         self.hwnd as isize
     }
 
-    /// Resize the host to the parent client area minus the HTML control strip.
+    /// Re-apply the DOM video rect when one is known; otherwise fall back to
+    /// the legacy full-client-minus-control-strip fit.
     pub fn fit_parent(&self) {
+        if let Some((x, y, w, h)) = self.video_rect {
+            self.resize(x, y, w, h);
+            return;
+        }
         let (w, h) = client_size(self.parent);
         let video_h = (h - CONTROL_STRIP_PX).max(1);
         self.resize(0, 0, w, video_h);
+    }
+
+    /// Size the host to the HTML video area (client-relative physical pixels).
+    /// This is the only place the mpv rect is decided — side panels and the
+    /// control strip stay visible because the host never covers them.
+    pub fn set_video_rect(&mut self, x: i32, y: i32, width: i32, height: i32) {
+        self.video_rect = Some((x, y, width, height));
+        self.resize(x, y, width, height);
     }
 
     /// Resize the host to an explicit client-relative rectangle.

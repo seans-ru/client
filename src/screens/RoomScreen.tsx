@@ -176,7 +176,7 @@ export function RoomScreen({ code }: { code: string }) {
         <div className="room-player-slot">
           <ErrorSlot
             title="Не удалось открыть файл комнаты"
-            description="Сервер не вернул файл для воспроизведения."
+            description="Сервер не вернул файл для воспроизведения. Ведущий видит плеер; для гостя файл появится, когда API начнёт отдавать task_file_id в комнате."
             onRetry={handleRetry}
           />
           <BackHomeButton />
@@ -196,6 +196,16 @@ export function RoomScreen({ code }: { code: string }) {
           roomMode
           onTransport={handleTransport}
           transportRef={transportRef}
+          sidecarExtra={
+            <RoomPanel
+              code={code}
+              state={room.state}
+              isHost={room.isHost}
+              onLeave={handleLeave}
+              onRetry={handleRetry}
+              embedded
+            />
+          }
         />
         {closedMessage ? (
           <div className="room-status-overlay" role="alert">
@@ -209,13 +219,6 @@ export function RoomScreen({ code }: { code: string }) {
           </div>
         ) : null}
       </div>
-      <RoomPanel
-        code={code}
-        state={room.state}
-        isHost={room.isHost}
-        onLeave={handleLeave}
-        onRetry={handleRetry}
-      />
     </div>
   );
 }

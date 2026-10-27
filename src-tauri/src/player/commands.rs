@@ -121,9 +121,33 @@ pub fn player_set_max_seekable(seconds: Option<f64>) -> Result<(), String> {
     Ok(())
 }
 
-/// Resize the mpv child window after a Tauri window resize.
+/// Video-area rectangle measured in the DOM (client-relative physical px).
+#[derive(Debug, serde::Deserialize)]
+pub struct SyncRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Resize the mpv child window.
+///
+/// With `rect`: size it to the HTML video area (sidecar / control strip stay
+/// uncovered). Without `rect`: re-apply the last known video rect.
 #[tauri::command]
-pub fn player_sync_size() -> Result<(), String> {
-    session::sync_host_size();
+pub fn player_sync_size(rect: Option<SyncRect>) -> Result<(), String> {
+    match rect {
+        Some(r) => {
+            if r.width.is_finite() && r.height.is_finite() && r.width >= 1.0 && r.height >= 1.0 {
+                session::sync_host_rect(
+                    r.x.round() as i32,
+                    r.y.round() as i32,
+                    r.width.round() as i32,
+                    r.height.round() as i32,
+                );
+            }
+        }
+        None => session::sync_host_size(),
+    }
     Ok(())
 }

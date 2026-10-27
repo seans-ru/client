@@ -60,11 +60,17 @@ function clampPct(n: number): number {
   return Math.min(100, Math.max(0, n));
 }
 
-/** Playback mode from `stream.ready` / `stream.complete`. */
+/**
+ * Playback mode from `stream` + `video` (the latter tells us the file is
+ * already uploaded as a single object).
+ */
 export function resolvePlaybackMode(
   stream: Pick<PlaybackStream, "ready" | "complete"> | null | undefined,
+  video?: Pick<PlaybackVideo, "url"> | null,
 ): PlaybackMode {
-  // `stream: null` = no worker heartbeat yet.
+  // Direct object URL = complete file, regardless of stream state.
+  if (video?.url) return "vod";
+  // `stream: null` = no worker heartbeat yet (unless video.url said otherwise).
   if (!stream) return "waiting";
   if (stream.complete) return "vod";
   if (stream.ready) return "progressive";

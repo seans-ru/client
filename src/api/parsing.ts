@@ -8,6 +8,7 @@
 
 import type {
   FileUrlResponse,
+  HistoryListItem,
   HistoryResponse,
   LibraryFile,
   LibraryItem,
@@ -18,6 +19,7 @@ import type {
   RoomDetailResponse,
   RoomInfo,
   RoomMemberResponse,
+  TaskDetailResponse,
   TaskResponse,
   TokenResponse,
   TorrentReleaseResponse,
@@ -76,7 +78,7 @@ function id(value: unknown): string | number {
 export function normalizeUser(raw: unknown): UserResponse {
   const r = asRaw(raw);
   const used = toNumber(r.used_bytes);
-  return {
+  const user: UserResponse = {
     id: id(r.id),
     email: str(r.email),
     display_name: str(r.display_name),
@@ -85,6 +87,13 @@ export function normalizeUser(raw: unknown): UserResponse {
     ...(used === null ? {} : { used_bytes: used }),
     created_at: str(r.created_at),
   };
+  if (typeof r.is_admin === "boolean") user.is_admin = r.is_admin;
+  if (typeof r.plan === "string" && r.plan.length > 0) user.plan = r.plan;
+  if (r.plan_expires_at !== undefined) {
+    user.plan_expires_at =
+      typeof r.plan_expires_at === "string" ? r.plan_expires_at : null;
+  }
+  return user;
 }
 
 export function normalizeToken(raw: unknown): TokenResponse {
@@ -100,9 +109,9 @@ export function normalizeMediaSearchResult(raw: unknown): MediaSearchResult {
   const r = asRaw(raw);
   return {
     id: id(r.id),
-    kp_id: num(r.kp_id),
+    kp_id: toNumber(r.kp_id),
     title: str(r.title),
-    year: num(r.year),
+    year: toNumber(r.year),
     poster_url: strOrNull(r.poster_url),
     kp_type: str(r.kp_type),
     rating_kp: toNumber(r.rating_kp),
@@ -120,8 +129,8 @@ export function normalizeMediaDetail(raw: unknown): MediaDetail {
   const tmdbId = optNum(r.tmdb_id);
   const detail: MediaDetail = {
     ...base,
-    original_title: str(r.original_title),
-    overview: str(r.overview),
+    original_title: strOrNull(r.original_title),
+    overview: strOrNull(r.overview),
     genres: strList(r.genres),
     updated_at: str(r.updated_at),
   };
@@ -143,9 +152,9 @@ export function normalizeTorrentRelease(
     size_bytes: num(r.size_bytes),
     seeders: num(r.seeders),
     leechers: num(r.leechers),
-    quality: str(r.quality),
-    voiceover: str(r.voiceover),
-    magnet: str(r.magnet),
+    quality: strOrNull(r.quality),
+    voiceover: strOrNull(r.voiceover),
+    magnet: strOrNull(r.magnet),
   };
   // Optional file list for task creation. Accept common field names and
   // both plain path strings and `{path}`-shaped entries.
@@ -172,29 +181,64 @@ export function normalizeTask(raw: unknown): TaskResponse {
     reserved_bytes: num(r.reserved_bytes),
     progress_pct: num(r.progress_pct),
     speed_bps: num(r.speed_bps),
-    stage: str(r.stage),
+    stage: strOrNull(r.stage),
     created_at: str(r.created_at),
-    updated_at: str(r.updated_at),
   };
+  const updatedAt = strOrNull(r.updated_at);
+  if (updatedAt !== null && updatedAt.length > 0) task.updated_at = updatedAt;
   if (typeof r.error === "string") task.error = r.error;
+  // TaskDetailResponse join fields (GET /api/tasks, cancel).
+  const mediaId = r.media_id ?? r.media_item_id ?? r.mediaId;
+  if (mediaId !== undefined && mediaId !== null) {
+    (task as TaskDetailResponse).media_id = id(mediaId);
+  }
+  const taskFileId = r.task_file_id ?? r.file_id ?? r.taskFileId ?? r.fileId;
+  if (taskFileId !== undefined && taskFileId !== null) {
+    (task as TaskDetailResponse).task_file_id = id(taskFileId);
+  }
   return task;
 }
 
 export function normalizeHistory(raw: unknown): HistoryResponse {
   const r = asRaw(raw);
+  // Nested `GET /api/history` envelope: unwrap the `history` object.
+  const source = r.history !== undefined && r.history !== null ? asRaw(r.history) : r;
   return {
-    id: id(r.id),
-    task_file_id: id(r.task_file_id),
-    position_sec: num(r.position_sec),
-    duration_sec: num(r.duration_sec),
-    completed: bool(r.completed),
-    updated_at: str(r.updated_at),
+    id: id(source.id),
+    task_file_id: id(source.task_file_id),
+    position_sec: num(source.position_sec),
+    duration_sec: num(source.duration_sec),
+    completed: bool(source.completed),
+    updated_at: str(source.updated_at),
   };
 }
 
+/** `GET /api/history` row: flat `HistoryResponse` or nested `{history, media, file, progress_pct}`. */
+export function normalizeHistoryListItem(raw: unknown): HistoryListItem {
+  const r = asRaw(raw);
+  const entry: HistoryListItem = normalizeHistory(raw);
+  const mediaRaw = r.media;
+  if (mediaRaw !== undefined && mediaRaw !== null && typeof mediaRaw === "object") {
+    const m = asRaw(mediaRaw);
+    entry.media = {
+      id: id(m.id),
+      title: str(m.title),
+      poster_url: strOrNull(m.poster_url),
+    };
+  }
+  const fileRaw = r.file;
+  if (fileRaw !== undefined && fileRaw !== null && typeof fileRaw === "object") {
+    const f = asRaw(fileRaw);
+    entry.file = { id: id(f.id), path: str(f.path) };
+  }
+  const pct = optNum(r.progress_pct);
+  if (pct !== undefined) entry.progress_pct = pct;
+  return entry;
+}
+
 /** Map a raw history payload (`GET /api/history`) to a typed list. */
-export function normalizeHistoryList(raw: unknown): HistoryResponse[] {
-  return Array.isArray(raw) ? raw.map(normalizeHistory) : [];
+export function normalizeHistoryList(raw: unknown): HistoryListItem[] {
+  return Array.isArray(raw) ? raw.map(normalizeHistoryListItem) : [];
 }
 
 export function normalizeReview(raw: unknown): ReviewResponse {
@@ -204,7 +248,7 @@ export function normalizeReview(raw: unknown): ReviewResponse {
     user_id: id(r.user_id),
     media_item_id: id(r.media_item_id),
     score: num(r.score),
-    review: str(r.review),
+    review: strOrNull(r.review),
     created_at: str(r.created_at),
     updated_at: str(r.updated_at),
   };
@@ -257,7 +301,7 @@ export function normalizeLibraryItem(raw: unknown): LibraryItem {
       title: str(mediaItem.title),
       poster_url: strOrNull(mediaItem.poster_url),
       kp_type: str(mediaItem.kp_type),
-      year: num(mediaItem.year),
+      year: toNumber(mediaItem.year),
     },
     files: Array.isArray(r.files) ? r.files.map(normalizeLibraryFile) : [],
     total_size: num(r.total_size),

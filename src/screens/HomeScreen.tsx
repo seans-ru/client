@@ -59,7 +59,7 @@ function ChartStrip({ items }: { items: MediaSearchResult[] }) {
           <div key={String(item.id)} role="listitem" className="home-chart-item">
             <PosterCard
               title={item.title}
-              subtitle={item.year > 0 ? String(item.year) : undefined}
+              subtitle={item.year != null && item.year > 0 ? String(item.year) : undefined}
               posterUrl={item.poster_url}
               rating={item.rating_kp}
               href={ROUTES.media(item.id)}

@@ -41,7 +41,7 @@ export function sortReleases(
         cmp = compareValues(a.title, b.title);
         break;
       case "quality":
-        cmp = compareValues(a.quality, b.quality);
+        cmp = compareValues(a.quality ?? "", b.quality ?? "");
         break;
       default:
         cmp = 0;
@@ -62,7 +62,7 @@ export function filterReleases(
   const q = query.trim().toLowerCase();
   if (q.length === 0) return [...releases];
   return releases.filter((release) =>
-    [release.tracker, release.title, release.quality, release.voiceover].some(
+    [release.tracker, release.title, release.quality ?? "", release.voiceover ?? ""].some(
       (field) => field.toLowerCase().includes(q),
     ),
   );

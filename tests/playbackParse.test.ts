@@ -162,4 +162,44 @@ describe("normalizePlayback", () => {
     expect(pb.stream?.complete).toBe(true);
     expect(pb.video.url).toBe("https://cdn/old.mkv");
   });
+
+  it("treats a usable seekable prefix as ready even when the flag is stale", () => {
+    // Worker logs show segments flowing while `stream_ready` did not reach
+    // the client (alias, string bool, or a lagging heartbeat).
+    const base = {
+      size_bytes: 100,
+      percent_downloaded: 50,
+      percent_seekable: 50,
+      segment_size: 50,
+      segments: [
+        { index: 0, start: 0, end: 50, available: true, url: "s0" },
+        { index: 1, start: 50, end: 100, available: false, url: null },
+      ],
+    };
+    // Non-empty seekable prefix → playback can start.
+    expect(
+      normalizePlaybackStream({ ...base, ready: false, max_seekable_bytes: 50 })
+        .ready,
+    ).toBe(true);
+    // Empty prefix stays waiting — max_seekable_bytes is the seek ceiling.
+    expect(
+      normalizePlaybackStream({ ...base, ready: false, max_seekable_bytes: 0 })
+        .ready,
+    ).toBe(false);
+  });
+
+  it("accepts stream_ready alias and loose booleans", () => {
+    const bare = {
+      size_bytes: 100,
+      max_seekable_bytes: 0,
+      percent_downloaded: 0,
+      percent_seekable: 0,
+      segment_size: 50,
+      segments: [],
+    };
+    expect(normalizePlaybackStream({ ...bare, stream_ready: true }).ready).toBe(true);
+    expect(normalizePlaybackStream({ ...bare, ready: "true" }).ready).toBe(true);
+    expect(normalizePlaybackStream({ ...bare, ready: 1 }).ready).toBe(true);
+    expect(normalizePlaybackStream({ ...bare, complete: 1 }).ready).toBe(true);
+  });
 });

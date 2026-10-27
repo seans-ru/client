@@ -7,12 +7,13 @@
  */
 
 import { Badge, Button, EmptyState, ErrorState, ProgressBar, Spinner } from "../../design/primitives";
-import type { ApiId, HistoryResponse } from "../../api/types";
+import type { ApiId, HistoryListItem } from "../../api/types";
 import { openPlayer } from "../player";
 import {
   formatHistoryUpdatedAt,
   historyFileFallback,
   historyProgressPercent,
+  historyRowTitle,
   isHistoryCompleted,
   sortHistoryForContinue,
 } from "./historyHelpers";
@@ -22,7 +23,7 @@ function HistoryRow({
   title,
   onContinue,
 }: {
-  entry: HistoryResponse;
+  entry: HistoryListItem;
   title: string;
   onContinue: (fileId: ApiId, startAt: number | null) => void;
 }) {
@@ -69,7 +70,7 @@ export function HistoryList({
   onRetry,
   onContinue,
 }: {
-  items: HistoryResponse[];
+  items: HistoryListItem[];
   loading: boolean;
   error: string | null;
   /** Optional file-id → display title map (library lookup). */
@@ -106,7 +107,8 @@ export function HistoryList({
     <ul className="history-list">
       {sorted.map((entry) => {
         const key = String(entry.task_file_id);
-        const title = titleMap.get(key) ?? historyFileFallback(entry.task_file_id);
+        const title =
+          historyRowTitle(entry) ?? titleMap.get(key) ?? historyFileFallback(entry.task_file_id);
         return (
           <HistoryRow
             key={String(entry.id)}

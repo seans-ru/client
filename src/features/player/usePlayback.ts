@@ -5,9 +5,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchPlayback } from "../../api/endpoints";
+import { fetchMediaEpisodes, fetchPlayback } from "../../api/endpoints";
 import type {
   PlaybackAudioTrack,
+  PlaybackCatalog,
   PlaybackEpisode,
   PlaybackResponse,
   PlaybackSubtitleTrack,
@@ -26,6 +27,7 @@ import {
   findEpisodeById,
   isEpisodePlayable,
   isSeriesCatalog,
+  mediaEpisodesToCatalog,
 } from "./episodeHelpers";
 import {
   resolveDownloadProgress,
@@ -93,6 +95,9 @@ export function usePlayback(
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [selectedAudioId, setSelectedAudioId] = useState<string | null>(null);
+  /** Series list from `GET /api/media/{id}/episodes` when playback omits `catalog`. */
+  const [episodesCatalog, setEpisodesCatalog] =
+    useState<PlaybackCatalog | null>(null);
   const playbackRef = useRef<PlaybackResponse | null>(null);
   playbackRef.current = playback;
 
@@ -159,6 +164,32 @@ export function usePlayback(
     return () => controller.abort();
   }, [enabled, mediaKey, fileKey, season, episode, reloadToken, fetchOnce]);
 
+  // Fallback series list: playback.catalog is often absent on the Seans API.
+  useEffect(() => {
+    if (!enabled) {
+      setEpisodesCatalog(null);
+      return;
+    }
+    const controller = new AbortController();
+    let cancelled = false;
+    void (async () => {
+      try {
+        const payload = await fetchMediaEpisodes(mediaId as ApiId, {
+          signal: controller.signal,
+        });
+        if (cancelled || controller.signal.aborted) return;
+        setEpisodesCatalog(mediaEpisodesToCatalog(payload));
+      } catch {
+        // Optional feature — leave catalog empty so the picker stays hidden.
+        if (!cancelled) setEpisodesCatalog(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [enabled, mediaKey, reloadToken]);
+
   // Poll while incomplete (5–10 s cadence). `stream: null` also polls.
   useEffect(() => {
     if (!enabled || !playback) return;
@@ -186,7 +217,7 @@ export function usePlayback(
   }, [enabled, playback, fetchOnce]);
 
   const mode = useMemo(
-    () => resolvePlaybackMode(playback?.stream ?? null),
+    () => resolvePlaybackMode(playback?.stream ?? null, playback?.video ?? null),
     [playback],
   );
 
@@ -201,14 +232,18 @@ export function usePlayback(
     [playback],
   );
 
+  /** Prefer playback.catalog; fall back to GET /api/media/{id}/episodes. */
+  const catalog = useMemo<PlaybackCatalog | null>(
+    () => playback?.catalog ?? episodesCatalog,
+    [playback, episodesCatalog],
+  );
+
   const audioTracks = useMemo(() => {
-    const ep = playback
-      ? findEpisodeById(playback.catalog, playback.file_id)
-      : null;
+    const ep = playback ? findEpisodeById(catalog, playback.file_id) : null;
     return ep?.audio_tracks?.length
       ? ep.audio_tracks
       : (playback?.audio_tracks ?? []);
-  }, [playback]);
+  }, [playback, catalog]);
 
   const audioOptions = useMemo<PlaybackAudioOption[]>(
     () =>
@@ -247,17 +282,11 @@ export function usePlayback(
     [mediaKey, fileKey],
   );
 
-  const episodes = useMemo(
-    () => catalogEpisodes(playback?.catalog ?? null),
-    [playback],
-  );
-  const seasonGroups = useMemo(
-    () => catalogSeasonGroups(playback?.catalog ?? null),
-    [playback],
-  );
+  const episodes = useMemo(() => catalogEpisodes(catalog), [catalog]);
+  const seasonGroups = useMemo(() => catalogSeasonGroups(catalog), [catalog]);
   const currentEpisode = useMemo(
-    () => (playback ? findEpisodeById(playback.catalog, playback.file_id) : null),
-    [playback],
+    () => (playback ? findEpisodeById(catalog, playback.file_id) : null),
+    [playback, catalog],
   );
 
   const canPlay = useMemo(() => {
@@ -288,7 +317,7 @@ export function usePlayback(
     episodes,
     seasonGroups,
     currentEpisode,
-    isSeries: isSeriesCatalog(playback?.catalog ?? null),
+    isSeries: isSeriesCatalog(catalog),
     canPlay,
     selectAudio,
     reload: () => setReloadToken((t) => t + 1),

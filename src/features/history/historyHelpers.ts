@@ -5,7 +5,7 @@
  * PlayerScreen and HistoryScreen share one source of truth.
  */
 
-import type { HistoryResponse, LibraryItem } from "../../api/types";
+import type { HistoryListItem, HistoryResponse, LibraryItem } from "../../api/types";
 import { isPlaybackCompleted } from "./historyThrottle";
 
 /**
@@ -48,13 +48,24 @@ export function findHistoryForFile(
  * Continue-watching list: newest first, incomplete rows before completed ones.
  * Completed rows are kept (marked in the UI), not dropped — the screen decides.
  */
-export function sortHistoryForContinue(list: readonly HistoryResponse[]): HistoryResponse[] {
+export function sortHistoryForContinue<T extends HistoryResponse>(
+  list: readonly T[],
+): T[] {
   return [...list].sort((a, b) => {
     const doneA = isHistoryCompleted(a) ? 1 : 0;
     const doneB = isHistoryCompleted(b) ? 1 : 0;
     if (doneA !== doneB) return doneA - doneB;
     return String(b.updated_at).localeCompare(String(a.updated_at));
   });
+}
+
+/**
+ * Display title from a history row's own `media` snippet
+ * (`GET /api/history` nested payload). Null when absent.
+ */
+export function historyRowTitle(entry: HistoryListItem): string | null {
+  const title = String(entry.media?.title ?? "").trim();
+  return title.length > 0 ? title : null;
 }
 
 /** Watch progress 0–100 for the row progress bar. */

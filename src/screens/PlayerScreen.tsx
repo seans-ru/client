@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { fetchFileUrl, fetchLibrary } from "../api/endpoints";
+import { ApiError } from "../api/client";
 import type { ApiId } from "../api/types";
 import type { PlaybackEpisode } from "../api/playback";
 import {
@@ -68,6 +70,31 @@ async function resolveFileMedia(
 }
 
 /**
+ * Find a library file id for a media episode (S/E match).
+ * Used when the episode picker was built from `GET /api/media/{id}/episodes`
+ * and the picker id is an episode id, not a task_file_id.
+ */
+async function findLibraryFileForEpisode(
+  mediaId: ApiId,
+  season: number | null | undefined,
+  episode: number | null | undefined,
+): Promise<string | null> {
+  const items = await fetchLibrary();
+  const mediaKey = String(mediaId);
+  for (const item of items) {
+    if (String(item.media_item.id) !== mediaKey) continue;
+    for (const file of item.files) {
+      const s = file.season ?? null;
+      const e = file.episode ?? null;
+      if (season != null && s != null && Number(s) !== Number(season)) continue;
+      if (episode != null && e != null && Number(e) !== Number(episode)) continue;
+      return String(file.id);
+    }
+  }
+  return null;
+}
+
+/**
  * Player screen (M7 + M8 + M9 + progressive). Full-bleed via
  * `isFullBleedRoute` (no left nav).
  *
@@ -88,6 +115,7 @@ export function PlayerScreen({
   roomMode = false,
   onTransport,
   transportRef,
+  sidecarExtra,
 }: {
   fileId: string;
   startAt?: number | null;
@@ -97,15 +125,29 @@ export function PlayerScreen({
   onTransport?: (action: RoomTransportAction, position: number) => void;
   /** Room (M10): player transport for heartbeats and guest remote apply. */
   transportRef?: { current: RoomTransport | null };
+  /** Extra sidecar content (room members / actions). */
+  sidecarExtra?: ReactNode;
 }) {
   const player = usePlayer();
   const [openToken, setOpenToken] = useState(0);
   const lastFileRef = useRef<string | null>(null);
   const intro = useTheIntroDb(fileId);
   const [mediaId, setMediaId] = useState<ApiId | null>(null);
+  /** Media id lookup gate — avoid error flashes while resolution is in flight. */
+  const [mediaResolve, setMediaResolve] = useState<
+    "pending" | "found" | "missing"
+  >("pending");
   const [blockedToastToken, setBlockedToastToken] = useState(0);
   const [waitingAtEdge, setWaitingAtEdge] = useState(false);
   const waitingAtEdgeRef = useRef(false);
+  /**
+   * How the file was actually opened. `usePlayback.mode` derives from the
+   * stream snapshot which can lag behind reality (complete file with a stale
+   * heartbeat); this tracks what we really started.
+   */
+  const [openedMode, setOpenedMode] = useState<"vod" | "progressive" | null>(
+    null,
+  );
   const prevLimitRef = useRef<ReturnType<typeof usePlayback>["limit"] | null>(
     null,
   );
@@ -127,6 +169,8 @@ export function PlayerScreen({
   // the media id; always resolve season/episode from the library file row.
   useEffect(() => {
     let cancelled = false;
+    setMediaId(null);
+    setMediaResolve("pending");
     void (async () => {
       try {
         const ctx = await resolveFileMedia(fileId);
@@ -134,16 +178,24 @@ export function PlayerScreen({
         if (ctx) {
           setMediaId(ctx.mediaId);
           setEpisodeCtx({ season: ctx.season, episode: ctx.episode });
+          setMediaResolve("found");
         } else if (intro.context?.mediaId != null) {
           setMediaId(intro.context.mediaId);
           setEpisodeCtx({
             season: intro.context.season,
             episode: intro.context.episode,
           });
+          setMediaResolve("found");
+        } else {
+          setMediaResolve("missing");
         }
       } catch {
-        if (!cancelled && intro.context?.mediaId != null) {
+        if (cancelled) return;
+        if (intro.context?.mediaId != null) {
           setMediaId(intro.context.mediaId);
+          setMediaResolve("found");
+        } else {
+          setMediaResolve("missing");
         }
       }
     })();
@@ -170,6 +222,9 @@ export function PlayerScreen({
     selectAudio,
   } = playbackState;
 
+  // What the player actually runs as (overrides a stale stream snapshot).
+  const effectiveMode = openedMode ?? mode;
+
   const historyProgress = useHistoryProgress({
     taskFileId: fileId,
     enabled: !roomMode,
@@ -186,8 +241,8 @@ export function PlayerScreen({
   snapshotRef.current = player.snapshot;
   const playerRef = useRef(player);
   playerRef.current = player;
-  const modeRef = useRef(mode);
-  modeRef.current = mode;
+  const modeRef = useRef(effectiveMode);
+  modeRef.current = effectiveMode;
   const limitRef = useRef(limit);
   limitRef.current = limit;
 
@@ -250,32 +305,32 @@ export function PlayerScreen({
   useEffect(() => {
     if (roomMode) return;
     void playerSetMaxSeekable(
-      mode === "vod" ? null : (limit.maxSeekableSec ?? null),
+      effectiveMode === "vod" ? null : (limit.maxSeekableSec ?? null),
     ).catch(() => {});
-  }, [mode, limit.maxSeekableSec, roomMode]);
+  }, [effectiveMode, limit.maxSeekableSec, roomMode]);
 
   // Pause at the contiguous-prefix edge; auto-resume when the prefix grows.
   // Never scrolls the user backwards on its own.
   useEffect(() => {
-    if (roomMode || mode !== "progressive") {
+    if (roomMode || effectiveMode !== "progressive") {
       setWaitingAtEdge(false);
       waitingAtEdgeRef.current = false;
       return;
     }
     const { position, pause, duration } = player.snapshot;
-    const atEdge = shouldPauseAtSeekEdge(position, limit, mode);
+    const atEdge = shouldPauseAtSeekEdge(position, limit, effectiveMode);
     if (atEdge && !pause && duration > 0) {
       void player.pause();
       setWaitingAtEdge(true);
       waitingAtEdgeRef.current = true;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [player.snapshot.position, player.snapshot.pause, mode, limit, roomMode]);
+  }, [player.snapshot.position, player.snapshot.pause, effectiveMode, limit, roomMode]);
 
   useEffect(() => {
     if (roomMode) return;
     const grew = shouldAutoResumeAfterGrowth(prevLimitRef.current, limit, {
-      mode,
+      mode: effectiveMode,
       waitingAtEdge: waitingAtEdgeRef.current,
     });
     prevLimitRef.current = limit;
@@ -284,7 +339,7 @@ export function PlayerScreen({
       setWaitingAtEdge(false);
       waitingAtEdgeRef.current = false;
     }
-  }, [limit, mode, player, roomMode]);
+  }, [limit, effectiveMode, player, roomMode]);
 
   // complete → seamless VOD switch (keep position, no user scroll).
   const openedAsProgressiveRef = useRef(false);
@@ -364,11 +419,14 @@ export function PlayerScreen({
   const streamComplete = playback?.stream?.complete ?? false;
   const hasStream = playback?.stream != null;
   useEffect(() => {
-    // Wait until playback metadata is ready when we expect progressive.
-    if (!roomMode && mediaId != null && playbackStatus === "loading") {
-      return;
+    // Hold while the media id lookup or the playback poll is still in flight.
+    // Failing here would flash an error on every entry before playback starts.
+    if (!roomMode) {
+      if (mediaId == null && mediaResolve === "pending") return;
+      if (mediaId != null && playbackStatus === "loading") return;
     }
 
+    setOpenedMode(null);
     const controller = new AbortController();
     let cancelled = false;
 
@@ -389,6 +447,7 @@ export function PlayerScreen({
           await player.start(file.url, {
             startAt: from ?? historyStart,
           });
+          setOpenedMode("vod");
           return;
         }
 
@@ -413,6 +472,7 @@ export function PlayerScreen({
             externalAudioUrls: externalAudio,
             maxSeekableSec: null,
           });
+          setOpenedMode("vod");
         };
 
         // Playback API missing / 404 — legacy library rows, or media without
@@ -422,15 +482,23 @@ export function PlayerScreen({
             try {
               await startVod([]);
               return;
-            } catch {
-              player.fail(
-                playbackState.error ??
-                  "Не удалось получить состояние загрузки (playback API)",
-              );
+            } catch (cause) {
+              if (cancelled) return;
+              // Not uploaded yet (404) is «файл ещё готовится», not an error.
+              if (cause instanceof ApiError && cause.status === 404) {
+                player.wait(
+                  "Файл ещё готовится — состояние загрузки появится чуть позже",
+                );
+              } else {
+                player.fail(
+                  playbackState.error ??
+                    "Не удалось получить состояние загрузки (playback API)",
+                );
+              }
               return;
             }
           }
-          player.fail("Ожидаем данные playback…");
+          player.wait("Ожидаем данные playback…");
           return;
         }
 
@@ -444,27 +512,42 @@ export function PlayerScreen({
           return;
         }
 
-        // No heartbeat.stream — for already-uploaded files the final object
-        // exists (`fetchFileUrl`); for in-progress ones wait for the worker.
+        // No heartbeat.stream yet. Incomplete files (`video.url == null`) must
+        // not be opened as VOD — the missing final object used to 404 and flash
+        // an error right before progressive playback began. Only legacy rows
+        // whose final object already exists are worth one VOD probe.
         if (!playback.stream) {
           try {
             await startVod(externalAudio);
             return;
           } catch {
-            player.fail(
-              "Воркер ещё не передал stream-прогресс — сегменты появляются, ожидайте…",
+            if (cancelled) return;
+            player.wait(
+              "Готовим первые сегменты — воркер ещё не передал stream-прогресс",
             );
             return;
           }
         }
 
         if (!playback.stream.ready) {
-          player.fail("Загрузка ещё не началась — нет доступных сегментов");
-          return;
+          // Stream state can lag behind a finished upload — probe the final
+          // object first; only if it is really missing show the waiting copy.
+          try {
+            await startVod(externalAudio);
+            return;
+          } catch {
+            if (cancelled) return;
+            const down = Math.round(playback.stream.percent_downloaded ?? 0);
+            const seekable = Math.round(playback.stream.percent_seekable ?? 0);
+            player.wait(
+              `Загрузка ещё не началась — нет доступных сегментов (API: скачано ${down}%, доступно ${seekable}%)`,
+            );
+            return;
+          }
         }
 
         if (!canPlayRef.current) {
-          player.fail("Файл ещё загружается — основное видео недоступно");
+          player.wait("Файл ещё загружается — основное видео недоступно");
           return;
         }
 
@@ -482,6 +565,7 @@ export function PlayerScreen({
           externalAudioUrls: externalAudio,
           maxSeekableSec: limitRef.current.maxSeekableSec,
         });
+        setOpenedMode("progressive");
       } catch (cause) {
         if (cancelled) return;
         const message =
@@ -503,6 +587,7 @@ export function PlayerScreen({
     openToken,
     roomMode,
     mediaId,
+    mediaResolve,
     playbackStatus,
     hasStream,
     streamReady,
@@ -522,10 +607,10 @@ export function PlayerScreen({
 
   // Apply selected audio when it changes (and after tracks appear).
   useEffect(() => {
-    if (mode === "waiting") return;
+    if (effectiveMode === "waiting") return;
     applyAudioTrack(selectedAudioId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAudioId, player.snapshot.tracks.length, mode]);
+  }, [selectedAudioId, player.snapshot.tracks.length, effectiveMode]);
 
   const handleSelectEpisode = useCallback(
     (episode: PlaybackEpisode) => {
@@ -533,9 +618,28 @@ export function PlayerScreen({
       void progressiveStop().catch(() => {});
       openedAsProgressiveRef.current = false;
       resumeAt.current = null;
-      window.location.hash = `#/player/${episode.id}`;
+      void (async () => {
+        // Picker may be built from GET /api/media/{id}/episodes (episode_id,
+        // not task_file_id). Resolve the library file for S/E and open it.
+        const file =
+          mediaId != null
+            ? await findLibraryFileForEpisode(
+                mediaId,
+                episode.season,
+                episode.episode,
+              ).catch(() => null)
+            : null;
+        const target = file ?? (episode.id != null ? String(episode.id) : null);
+        if (target && target !== fileId) {
+          window.location.hash = `#/player/${target}`;
+          return;
+        }
+        // Same file: switch the playback query and reload.
+        setEpisodeCtx({ season: episode.season, episode: episode.episode });
+        setOpenToken((t) => t + 1);
+      })();
     },
-    [],
+    [mediaId, fileId],
   );
 
   return (
@@ -543,12 +647,15 @@ export function PlayerScreen({
       <PlayerSurface
         player={{
           ...playerWithHistory,
-          retry: () => setOpenToken((token) => token + 1),
+          retry: () => {
+            playbackState.reload();
+            setOpenToken((token) => token + 1);
+          },
         }}
         segments={intro.segments}
         mediaId={intro.context?.mediaId ?? mediaId}
         alreadyReviewed={Boolean(intro.context?.alreadyReviewed)}
-        mode={mode}
+        mode={effectiveMode}
         progress={progress}
         limit={limit}
         blockedToastToken={blockedToastToken}
@@ -565,6 +672,7 @@ export function PlayerScreen({
         currentFileId={fileId}
         onSelectEpisode={handleSelectEpisode}
         waitingAtEdge={waitingAtEdge}
+        sidecarExtra={sidecarExtra}
       />
     </section>
   );

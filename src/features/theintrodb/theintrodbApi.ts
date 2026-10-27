@@ -1,12 +1,17 @@
 /**
  * TheIntroDB API client (M8).
  *
- * GET https://api.theintrodb.org/v3/media?tmdb_id=&season=&episode=
+ * GET https://api.theintrodb.org/v4/media?tmdb_id=&season=&episode=
  * No API key for reads. Rate limit 30 req/10s, 1000/day — session-only Map cache.
  * Failures resolve to an empty bundle (feature is silently off).
+ *
+ * A 404 is normal for media nobody has submitted timestamps for yet
+ * (`code: "no_submissions"`) — same silent-off, but the code is logged so it
+ * is not mistaken for a client bug.
  */
 
 import { toNumber } from "../../api/parsing";
+import { logHttpStart } from "../../lib/httpTrace";
 import {
   emptyBundle,
   SEGMENT_TYPES,
@@ -15,7 +20,7 @@ import {
   type TheIntroDbSegmentType,
 } from "./types";
 
-export const THEINTRODB_BASE_URL = "https://api.theintrodb.org/v3";
+export const THEINTRODB_BASE_URL = "https://api.theintrodb.org/v4";
 
 /** Session-only cache: key = `${tmdbId}:${season}:${episode}`. */
 const segmentCache = new Map<string, TheIntroDbBundle>();
@@ -95,29 +100,44 @@ function buildMediaUrl(params: FetchSegmentsParams): string {
 async function fetchAndNormalize(
   params: FetchSegmentsParams,
 ): Promise<TheIntroDbBundle> {
+  const url = buildMediaUrl(params);
+  const traceDone = logHttpStart("GET", url);
   let res: Response;
   try {
     const { isTauri } = await import("@tauri-apps/api/core");
     if (isTauri()) {
       const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http");
-      res = (await tauriFetch(buildMediaUrl(params), {
+      res = (await tauriFetch(url, {
         method: "GET",
         headers: { Accept: "application/json" },
       })) as unknown as Response;
     } else {
-      res = await fetch(buildMediaUrl(params), {
+      res = await fetch(url, {
         method: "GET",
         headers: { Accept: "application/json" },
       });
     }
-  } catch {
-    res = await fetch(buildMediaUrl(params), {
+    traceDone(res.status);
+  } catch (cause) {
+    traceDone(undefined, cause);
+    res = await fetch(url, {
       method: "GET",
       headers: { Accept: "application/json" },
     });
+    traceDone(res.status);
   }
   if (!res.ok) {
-    throw new Error(`TheIntroDB HTTP ${res.status}`);
+    // 404 carries a machine-readable `code` (no_submissions | media_not_found |
+    // episode_not_found) — surface it so silent-off is diagnosable.
+    let code = `HTTP ${res.status}`;
+    try {
+      const body = JSON.parse(await res.text()) as { code?: unknown; error?: unknown };
+      if (typeof body.code === "string" && body.code.length > 0) code = body.code;
+      else if (typeof body.error === "string" && body.error.length > 0) code = body.error;
+    } catch {
+      // non-JSON body — keep the status
+    }
+    throw new Error(`TheIntroDB ${code}`);
   }
   const text = await res.text();
   if (text.length === 0) return emptyBundle();
@@ -155,7 +175,13 @@ export async function fetchSegments(
       segmentCache.set(key, bundle);
       return bundle;
     } catch (cause) {
-      console.debug("[theintrodb] segments unavailable", key, cause);
+      const reason = cause instanceof Error ? cause.message : String(cause);
+      if (reason.includes("no_submissions")) {
+        // Normal state: media exists, nobody submitted timestamps for it yet.
+        console.debug("[theintrodb] no submissions for", key);
+      } else {
+        console.debug("[theintrodb] segments unavailable", key, cause);
+      }
       return emptyBundle();
     } finally {
       inflight.delete(key);

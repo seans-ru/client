@@ -1,19 +1,22 @@
 /**
- * Full-bleed player surface (M7 + M8 + progressive): video host + overlay
- * controls, TheIntroDB chrome, progressive status / episode picker.
+ * Sidecar player layout: clean video area + slim transport strip + context
+ * rail (series episodes / room). The mpv child window is sized to the video
+ * area rect only — the rail and transport stay uncovered HTML.
  *
- * The actual video pixels are drawn by libmpv into a Win32 child window
- * (`wid`) behind the webview; this component is the HTML chrome and input
- * layer (controls, keyboard, auto-hide).
+ * The actual video pixels are drawn by libmpv into a Win32 child window (`wid`)
+ * above the webview; this component measures the video area and owns all
+ * chrome (transport, keyboard, sidecar, progressive toasts).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import { Button, ErrorState, Spinner } from "../../design/primitives";
 import { CreditsPopup } from "../theintrodb/CreditsPopup";
 import { SkipButtons } from "../theintrodb/SegmentChrome";
 import { EMPTY_BUNDLE } from "../theintrodb/types";
 import type { TheIntroDbBundle } from "../theintrodb/types";
 import { useSegmentChrome } from "../theintrodb/useSegmentChrome";
+import { EpisodePicker } from "./EpisodePicker";
 import { PlayerControls } from "./PlayerControls";
 import { ProgressiveStatus } from "./ProgressiveStatus";
 import {
@@ -21,7 +24,6 @@ import {
   clampSpeed,
   formatHwdec,
   formatVoDebug,
-  OVERLAY_IDLE_MS,
   SEEK_STEP_SEC,
 } from "./playerHelpers";
 import {
@@ -54,12 +56,14 @@ export type PlayerSurfaceProps = {
   audioOptions?: PlaybackAudioOption[];
   selectedAudioId?: string | null;
   onSelectAudio?: (trackId: string | number) => void;
-  /** Series catalog for the episode picker. */
+  /** Series catalog for the sidecar episode list. */
   seasonGroups?: PlaybackSeasonGroup[];
   currentFileId?: string | number | null;
   onSelectEpisode?: (episode: PlaybackEpisode) => void;
   /** True while playback is paused at the contiguous-prefix edge. */
   waitingAtEdge?: boolean;
+  /** Extra sidecar content (room members / actions). */
+  sidecarExtra?: ReactNode;
 };
 
 export function PlayerSurface({
@@ -79,45 +83,54 @@ export function PlayerSurface({
   currentFileId,
   onSelectEpisode,
   waitingAtEdge = false,
+  sidecarExtra,
 }: PlayerSurfaceProps) {
-  const { phase, snapshot, error, retry } = player;
-  const [controlsVisible, setControlsVisible] = useState(true);
-  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { phase, snapshot, error, waitMessage, retry } = player;
   const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const videoAreaRef = useRef<HTMLDivElement | null>(null);
+  const fullscreen = snapshot.fullscreen;
 
-  const bumpIdle = useCallback(() => {
-    setControlsVisible(true);
-    if (idleTimer.current) clearTimeout(idleTimer.current);
-    idleTimer.current = setTimeout(() => setControlsVisible(false), OVERLAY_IDLE_MS);
-  }, []);
+  const hasEpisodes = Boolean(seasonGroups && seasonGroups.length > 0 && onSelectEpisode);
+  const showSidecar = hasEpisodes || Boolean(sidecarExtra);
 
-  // Hide once on first idle tick; re-show on any mouse move.
+  // Keep the mpv child window exactly on the DOM video area (physical px).
+  // This is what leaves the transport strip and sidecar uncovered.
+  // While a status screen is up the host is collapsed — it sits above the
+  // webview and would otherwise paint over the waiting/error message.
   useEffect(() => {
-    bumpIdle();
-    return () => {
-      if (idleTimer.current) clearTimeout(idleTimer.current);
+    const el = videoAreaRef.current;
+    if (!el) return;
+    const sync = () => {
+      if (phase !== "ready") {
+        void player.syncSize({ x: 0, y: 0, width: 1, height: 1 });
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return;
+      const dpr = window.devicePixelRatio || 1;
+      void player.syncSize({
+        x: rect.left * dpr,
+        y: rect.top * dpr,
+        width: rect.width * dpr,
+        height: rect.height * dpr,
+      });
     };
-  }, [bumpIdle]);
-
-  // Keep the mpv child window in sync with the Tauri window size.
-  useEffect(() => {
-    const onResize = () => {
-      void player.syncSize();
-    };
-    window.addEventListener("resize", onResize);
+    sync();
     // First paint after route enter — CSS height settles a tick late.
-    void player.syncSize();
-    const t = setTimeout(() => void player.syncSize(), 50);
+    const t = setTimeout(sync, 50);
+    const observer = new ResizeObserver(sync);
+    observer.observe(el);
+    window.addEventListener("resize", sync);
     return () => {
-      window.removeEventListener("resize", onResize);
       clearTimeout(t);
+      observer.disconnect();
+      window.removeEventListener("resize", sync);
     };
-  }, [player]);
+  }, [player.syncSize, phase, fullscreen, showSidecar]);
 
   const togglePause = useCallback(() => {
     void player.togglePause();
-    bumpIdle();
-  }, [player, bumpIdle]);
+  }, [player]);
 
   const seekTo = useCallback(
     (seconds: number) => {
@@ -132,9 +145,8 @@ export function PlayerSurface({
         return;
       }
       void player.seek(decision.seconds);
-      bumpIdle();
     },
-    [player, bumpIdle, limit, mode, snapshot.duration, onBlockedSeek],
+    [player, limit, mode, snapshot.duration, onBlockedSeek],
   );
 
   const seekMs = useCallback(
@@ -159,9 +171,8 @@ export function PlayerSurface({
         return;
       }
       void player.seek(decision.seconds, { personal: true });
-      bumpIdle();
     },
-    [player, bumpIdle, limit, mode, snapshot.duration, onBlockedSeek],
+    [player, limit, mode, snapshot.duration, onBlockedSeek],
   );
 
   const bundle = segments ?? EMPTY_BUNDLE;
@@ -198,12 +209,10 @@ export function PlayerSurface({
         case "ArrowUp":
           event.preventDefault();
           void player.setVolume(Math.min(100, snapshot.volume + 5));
-          bumpIdle();
           break;
         case "ArrowDown":
           event.preventDefault();
           void player.setVolume(Math.max(0, snapshot.volume - 5));
-          bumpIdle();
           break;
         case "f":
         case "F":
@@ -211,7 +220,6 @@ export function PlayerSurface({
         case "А":
           event.preventDefault();
           void player.setFullscreen(!snapshot.fullscreen);
-          bumpIdle();
           break;
         case "m":
         case "M":
@@ -219,7 +227,6 @@ export function PlayerSurface({
         case "Ь":
           event.preventDefault();
           void player.setMute(!snapshot.mute);
-          bumpIdle();
           break;
         default:
           break;
@@ -227,24 +234,33 @@ export function PlayerSurface({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [player, snapshot, togglePause, seekTo, bumpIdle]);
+  }, [player, snapshot, togglePause, seekTo]);
 
+  let statusNode: ReactNode = null;
   if (phase === "loading") {
-    return (
-      <div className="player-surface player-surface-status" ref={surfaceRef}>
+    statusNode = (
+      <div className="player-surface-status">
         <Spinner label="Загрузка плеера…" />
       </div>
     );
-  }
-
-  if (phase === "error") {
-    return (
-      <div className="player-surface player-surface-status" ref={surfaceRef}>
+  } else if (phase === "waiting") {
+    statusNode = (
+      <div className="player-surface-status">
+        <Spinner label={waitMessage ?? "Готовим воспроизведение…"} />
+        <Button variant="ghost" size="sm" onClick={retry}>
+          Повторить
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => window.history.back()}>
+          Назад
+        </Button>
+      </div>
+    );
+  } else if (phase === "error") {
+    statusNode = (
+      <div className="player-surface-status">
         <ErrorState
           title="Не удалось открыть файл"
-          description={
-            error ?? "Проверьте статус загрузки и попробуйте снова."
-          }
+          description={error ?? "Проверьте статус загрузки и попробуйте снова."}
           onRetry={retry}
         />
         <Button variant="ghost" size="sm" onClick={() => window.history.back()}>
@@ -254,127 +270,108 @@ export function PlayerSurface({
     );
   }
 
-  const episodeSlot =
-    seasonGroups && seasonGroups.length > 0 && onSelectEpisode ? (
-      <label className="player-select-wrap">
-        <span className="player-select-label">Серия</span>
-        <select
-          className="player-select"
-          value={currentFileId == null ? "" : String(currentFileId)}
-          onChange={(event) => {
-            const id = event.target.value;
-            for (const group of seasonGroups) {
-              for (const episode of group.episodes) {
-                if (String(episode.id) === id && episode.has_primary_video) {
-                  onSelectEpisode(episode);
-                  return;
-                }
-              }
-            }
-          }}
-          aria-label="Серия"
-        >
-          {seasonGroups.flatMap((group) =>
-            group.episodes.map((episode) => (
-              <option
-                key={String(episode.id)}
-                value={String(episode.id)}
-                disabled={!episode.has_primary_video}
-              >
-                {`S${String(group.season).padStart(2, "0")}E${String(episode.episode).padStart(2, "0")}${
-                  episode.episode_end && episode.episode_end > episode.episode
-                    ? `–E${String(episode.episode_end).padStart(2, "0")}`
-                    : ""
-                }${episode.title ? ` · ${episode.title}` : ""}${
-                  episode.has_primary_video ? "" : " · загружается"
-                }`}
-              </option>
-            )),
-          )}
-        </select>
-      </label>
-    ) : null;
-
   return (
     <div
-      className="player-surface"
+      className={`player-surface${fullscreen ? " player-surface-fullscreen" : ""}`}
       ref={surfaceRef}
-      onMouseMove={bumpIdle}
-      onClick={(event) => {
-        // Clicks on empty surface toggle pause; controls stop propagation.
-        if (event.target === surfaceRef.current) togglePause();
-      }}
     >
-      {chrome.creditsPopupOpen && mediaId != null ? (
-        <CreditsPopup
-          mediaId={mediaId}
-          onSubmitted={chrome.onCreditsSubmitted}
-          onDismiss={chrome.onDismissCredits}
-        />
+      <div className="player-stage">
+        <div
+          className={`player-video-area${statusNode ? " player-video-area-status" : ""}`}
+          ref={videoAreaRef}
+          onClick={statusNode ? undefined : togglePause}
+          title={statusNode ? undefined : "Пробел — пауза"}
+        >
+          {statusNode}
+        </div>
+
+        {statusNode ? null : (
+          <>
+            {chrome.creditsPopupOpen && mediaId != null ? (
+              <CreditsPopup
+                mediaId={mediaId}
+                onSubmitted={chrome.onCreditsSubmitted}
+                onDismiss={chrome.onDismissCredits}
+              />
+            ) : null}
+
+            <SkipButtons
+              skips={chrome.skips}
+              visible={chrome.skipVisible}
+              onSkip={seekMsPersonal}
+            />
+
+            <PlayerControls
+              snapshot={snapshot}
+              onSeek={seekTo}
+              onTogglePause={togglePause}
+              onSetSpeed={(speed) => {
+                void player.setSpeed(clampSpeed(speed));
+              }}
+              onSetVolume={(volume) => {
+                void player.setVolume(volume);
+              }}
+              onToggleMute={() => {
+                void player.setMute(!snapshot.mute);
+              }}
+              onSetAudioTrack={(id) => {
+                void player.setAudioTrack(id);
+                void player.refreshTracks();
+              }}
+              onSetSubtitleTrack={(id) => {
+                void player.setSubtitleTrack(id);
+                void player.refreshTracks();
+              }}
+              onToggleFullscreen={() => {
+                void player.setFullscreen(!snapshot.fullscreen);
+              }}
+              markers={chrome.markers}
+              chapters={chrome.markers}
+              onSeekChapter={seekTo}
+              mode={mode}
+              progress={progress}
+              limit={limit}
+              onBlockedSeek={onBlockedSeek}
+              audioOptions={audioOptions}
+              selectedAudioId={selectedAudioId}
+              onSelectPlaybackAudio={(trackId) => {
+                onSelectAudio?.(trackId);
+              }}
+            />
+          </>
+        )}
+
+        {statusNode ? null : (
+          <ProgressiveStatus
+            mode={mode}
+            progress={progress ?? { percentDownloaded: 0, percentSeekable: 0 }}
+            limit={limit ?? { maxSeekableSec: null, seekableRatio: null, durationSec: null }}
+            waitingAtEdge={waitingAtEdge}
+            blockedToastToken={blockedToastToken}
+          />
+        )}
+      </div>
+
+      {showSidecar ? (
+        <aside className="player-sidecar" aria-label="Серии и участники">
+          {hasEpisodes ? (
+            <EpisodePicker
+              groups={seasonGroups!}
+              currentFileId={currentFileId ?? null}
+              onSelect={(episode) => onSelectEpisode?.(episode)}
+            />
+          ) : null}
+          {sidecarExtra}
+          {phase === "ready" ? (
+            <p className="player-sidecar-meta" title="Режим декодирования">
+              {formatHwdec(snapshot.hwdec)}
+              {formatVoDebug(snapshot.vo, snapshot.video_w, snapshot.video_h)
+                ? ` · ${formatVoDebug(snapshot.vo, snapshot.video_w, snapshot.video_h)}`
+                : ""}
+            </p>
+          ) : null}
+        </aside>
       ) : null}
-
-      <SkipButtons
-        skips={chrome.skips}
-        visible={chrome.skipVisible}
-        onSkip={seekMsPersonal}
-      />
-
-      <PlayerControls
-        snapshot={snapshot}
-        visible={controlsVisible}
-        onSeek={seekTo}
-        onTogglePause={togglePause}
-        onSetSpeed={(speed) => {
-          void player.setSpeed(clampSpeed(speed));
-          bumpIdle();
-        }}
-        onSetVolume={(volume) => {
-          void player.setVolume(volume);
-          bumpIdle();
-        }}
-        onToggleMute={() => {
-          void player.setMute(!snapshot.mute);
-          bumpIdle();
-        }}
-        onSetAudioTrack={(id) => {
-          void player.setAudioTrack(id);
-          void player.refreshTracks();
-          bumpIdle();
-        }}
-        onSetSubtitleTrack={(id) => {
-          void player.setSubtitleTrack(id);
-          void player.refreshTracks();
-          bumpIdle();
-        }}
-        onToggleFullscreen={() => {
-          void player.setFullscreen(!snapshot.fullscreen);
-          bumpIdle();
-        }}
-        markers={chrome.markers}
-        chapters={chrome.markers}
-        onSeekChapter={seekTo}
-        hwdecLabel={formatHwdec(snapshot.hwdec)}
-        voDebug={formatVoDebug(snapshot.vo, snapshot.video_w, snapshot.video_h)}
-        mode={mode}
-        progress={progress}
-        limit={limit}
-        onBlockedSeek={onBlockedSeek}
-        audioOptions={audioOptions}
-        selectedAudioId={selectedAudioId}
-        onSelectPlaybackAudio={(trackId) => {
-          onSelectAudio?.(trackId);
-          bumpIdle();
-        }}
-        episodeSlot={episodeSlot}
-      />
-
-      <ProgressiveStatus
-        mode={mode}
-        progress={progress ?? { percentDownloaded: 0, percentSeekable: 0 }}
-        limit={limit ?? { maxSeekableSec: null, seekableRatio: null, durationSec: null }}
-        waitingAtEdge={waitingAtEdge}
-        blockedToastToken={blockedToastToken}
-      />
     </div>
   );
 }

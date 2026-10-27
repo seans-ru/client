@@ -9,6 +9,7 @@ import {
   groupEpisodesBySeason,
   isEpisodePlayable,
   isSeriesCatalog,
+  mediaEpisodesToCatalog,
   nextPlayableEpisode,
 } from "../src/features/player/episodeHelpers";
 
@@ -118,5 +119,52 @@ describe("playability and catalog flattening", () => {
     expect(nextPlayableEpisode(catalog, "e6")).toBeNull();
     expect(isSeriesCatalog(catalog)).toBe(true);
     expect(isSeriesCatalog({ kind: "movie" })).toBe(false);
+  });
+});
+
+describe("mediaEpisodesToCatalog", () => {
+  it("maps GET /api/media/{id}/episodes into a PlaybackCatalog", () => {
+    const catalog = mediaEpisodesToCatalog({
+      media_id: "m1",
+      title: "Show",
+      kind: "series",
+      episodes: [
+        {
+          episode_id: "ep-a",
+          season: 1,
+          episode: 1,
+          title: "Pilot",
+          audio_tracks: [{ id: "t1", language: "RU", flags: ["dub"], label: "Дубляж" }],
+        },
+        {
+          episode_id: "ep-b",
+          season: 1,
+          episode: 2,
+          episode_end: 0,
+          title: null,
+        },
+      ],
+    });
+    expect(catalog?.kind).toBe("series");
+    expect(catalog?.files).toHaveLength(2);
+    expect(catalog?.files?.[0].id).toBe("ep-a");
+    expect(catalog?.files?.[0].title).toBe("Pilot");
+    expect(catalog?.files?.[0].has_primary_video).toBe(true);
+    expect(catalog?.files?.[0].audio_tracks?.[0].language).toBe("ru");
+    expect(catalog?.groups?.map((g) => g.season)).toEqual([1]);
+  });
+
+  it("returns null for empty / invalid payloads", () => {
+    expect(mediaEpisodesToCatalog(null)).toBeNull();
+    expect(mediaEpisodesToCatalog({})).toBeNull();
+    expect(mediaEpisodesToCatalog("x")).toBeNull();
+  });
+
+  it("treats kind=movie as a movie catalog", () => {
+    const catalog = mediaEpisodesToCatalog({
+      kind: "movie",
+      episodes: [{ episode_id: "ep", season: 0, episode: 0 }],
+    });
+    expect(catalog?.kind).toBe("movie");
   });
 });

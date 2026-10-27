@@ -43,6 +43,16 @@
   overflow: auto;
 }
 
+/* Inside the player sidecar — the rail already provides chrome. */
+.room-panel-embedded {
+  flex: 1 1 auto;
+  width: auto;
+  padding: 0;
+  background: transparent;
+  border-left: 0;
+  overflow: visible;
+}
+
 .room-panel-header {
   display: flex;
   flex-direction: column;

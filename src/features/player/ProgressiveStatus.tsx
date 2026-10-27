@@ -1,12 +1,11 @@
 /**
- * Progressive status chrome: dual progress («Скачано» / «Доступно»),
- * grey-zone toast, and the buffer-waiting banner at the seekable edge.
+ * Progressive overlays: grey-zone toast and the buffer-waiting banner at the
+ * seekable edge. Download labels live in the transport hint row.
  */
 
 import { useEffect, useState } from "react";
 import {
   BUFFER_WAITING_LABEL,
-  formatProgressLabels,
   formatSeekableUntil,
   SEEK_BLOCKED_TOAST,
   type DownloadProgress,
@@ -25,13 +24,11 @@ export type ProgressiveStatusProps = {
 
 export function ProgressiveStatus({
   mode,
-  progress,
   limit,
   waitingAtEdge,
   blockedToastToken,
 }: ProgressiveStatusProps) {
   const [toastVisible, setToastVisible] = useState(false);
-  const labels = formatProgressLabels(progress);
   const seekableUntil = formatSeekableUntil(limit);
 
   useEffect(() => {
@@ -44,22 +41,9 @@ export function ProgressiveStatus({
   if (mode === "vod") return null;
 
   return (
-    <div className="player-progressive" role="status" aria-live="polite">
-      <div className="player-progressive-row">
-        <span className="player-progressive-item" title="Объём, который уже на сервере">
-          {labels.downloaded}
-        </span>
-        <span
-          className="player-progressive-item player-progressive-item-seekable"
-          title="Моменты, куда уже можно перематывать"
-        >
-          {labels.seekable}
-          {seekableUntil ? <span className="player-progressive-until"> · {seekableUntil}</span> : null}
-        </span>
-      </div>
-
+    <>
       {waitingAtEdge || mode === "waiting" ? (
-        <div className="player-buffer-wait">
+        <div className="player-buffer-wait" role="status">
           <span className="player-buffer-spinner" aria-hidden="true" />
           {mode === "waiting" ? "Готовим первые сегменты…" : BUFFER_WAITING_LABEL}
         </div>
@@ -73,6 +57,6 @@ export function ProgressiveStatus({
           </span>
         </div>
       ) : null}
-    </div>
+    </>
   );
 }

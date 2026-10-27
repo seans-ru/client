@@ -305,7 +305,7 @@ export function ReleaseList({
             </p>
             <p>
               {pendingRelease.file_paths && pendingRelease.file_paths.length > 0
-                ? `Будут загружены файлы (${pendingRelease.file_paths.length}).`
+                ? `Заявлено файлов: ${pendingRelease.file_paths.length}. Пока сервер не фильтрует выбор — будет загружен весь торрент.`
                 : "Будет загружен весь торрент."}
             </p>
             {createError ? (

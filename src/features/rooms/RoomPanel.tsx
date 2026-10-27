@@ -14,6 +14,8 @@ export type RoomPanelProps = {
   isHost: boolean;
   onLeave: () => void;
   onRetry?: () => void;
+  /** Rendered inside the player sidecar (no own aside chrome). */
+  embedded?: boolean;
 };
 
 function MemberRow({
@@ -40,6 +42,7 @@ export function RoomPanel({
   isHost: localIsHost,
   onLeave,
   onRetry,
+  embedded = false,
 }: RoomPanelProps) {
   const [copied, setCopied] = useState(false);
   const shareUrl = roomShareUrl(code);
@@ -58,8 +61,11 @@ export function RoomPanel({
     }
   };
 
+  const rootClass = embedded ? "room-panel room-panel-embedded" : "room-panel";
+  const Root = embedded ? "div" : "aside";
+
   return (
-    <aside className="room-panel" aria-label="Комната">
+    <Root className={rootClass} aria-label="Комната">
       <header className="room-panel-header">
         <h1 className="room-panel-title">Комната</h1>
         <p className="room-panel-code" title="Код комнаты">
@@ -104,6 +110,6 @@ export function RoomPanel({
           </Button>
         ) : null}
       </footer>
-    </aside>
+    </Root>
   );
 }

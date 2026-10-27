@@ -3,6 +3,7 @@ import {
   buildRoomWsUrl,
   isHost,
   memberLabel,
+  resolveRoomWsUrl,
   roomCloseMessage,
   roomShareUrl,
   shouldApplyRemoteState,
@@ -160,6 +161,39 @@ describe("buildRoomWsUrl", () => {
       wsUrl: "wss://api.seans.tedeshi.ru/ws/rooms/ABCD2345",
     });
     expect(url).toBe("wss://api.seans.tedeshi.ru/ws/rooms/ABCD2345");
+  });
+
+  it("resolves a relative server ws_url against the API WS origin", () => {
+    // Backend POST /api/rooms returns "/ws/rooms/CODE" — never use as-is.
+    const url = buildRoomWsUrl({
+      code: "ABCD2345",
+      token: "t",
+      wsUrl: "/ws/rooms/ABCD2345",
+      apiBaseUrl: "https://api.seans.tedeshi.ru",
+    });
+    expect(url.startsWith("wss://api.seans.tedeshi.ru/ws/rooms/ABCD2345")).toBe(
+      true,
+    );
+    expect(url).toContain("token=t");
+  });
+
+  it("ignores empty ws_url and derives from the API base", () => {
+    const url = buildRoomWsUrl({
+      code: "ABCD2345",
+      token: null,
+      wsUrl: "",
+      apiBaseUrl: "https://api.seans.tedeshi.ru",
+    });
+    expect(url).toBe("wss://api.seans.tedeshi.ru/ws/rooms/ABCD2345");
+  });
+
+  it("resolveRoomWsUrl maps absolute http(s) to ws(s)", () => {
+    expect(resolveRoomWsUrl("https://api.example/ws/rooms/C", "https://x")).toBe(
+      "wss://api.example/ws/rooms/C",
+    );
+    expect(resolveRoomWsUrl("http://localhost:8000/ws/rooms/C", "https://x")).toBe(
+      "ws://localhost:8000/ws/rooms/C",
+    );
   });
 
   it("toWebSocketBase maps http(s) to ws(s)", () => {

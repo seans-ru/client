@@ -12,6 +12,7 @@
  */
 
 import { getSessionToken, setSessionToken } from "./session";
+import { logHttpStart } from "../lib/httpTrace";
 
 const DEFAULT_API_BASE_URL = "https://api.seans.tedeshi.ru";
 
@@ -107,7 +108,24 @@ async function readErrorMessage(res: Response): Promise<string> {
     const text = await res.text();
     if (text.length === 0) return res.statusText || "Ошибка API";
     try {
-      const data = JSON.parse(text) as { message?: unknown; error?: unknown };
+      const data = JSON.parse(text) as {
+        message?: unknown;
+        error?: unknown;
+        detail?: unknown;
+      };
+      // FastAPI envelope: {"detail": "..."} or 422 {"detail": [{msg, ...}]}
+      if (typeof data.detail === "string" && data.detail.length > 0) {
+        return data.detail;
+      }
+      if (Array.isArray(data.detail) && data.detail.length > 0) {
+        const first = data.detail[0] as { msg?: unknown; detail?: unknown };
+        if (typeof first.msg === "string" && first.msg.length > 0) {
+          return first.msg;
+        }
+        if (typeof first.detail === "string" && first.detail.length > 0) {
+          return first.detail;
+        }
+      }
       if (typeof data.message === "string" && data.message.length > 0) {
         return data.message;
       }
@@ -143,14 +161,19 @@ export async function request<T>(
   }
 
   let res: Response;
+  const method = options.method ?? "GET";
+  const fullUrl = apiUrl(path, options.query);
+  const traceDone = logHttpStart(method, fullUrl);
   try {
-    res = await apiFetch(apiUrl(path, options.query), {
-      method: options.method ?? "GET",
+    res = await apiFetch(fullUrl, {
+      method,
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       signal: options.signal,
     });
+    traceDone(res.status);
   } catch (cause) {
+    traceDone(undefined, cause);
     const message = cause instanceof Error ? cause.message : "Сеть недоступна";
     throw new ApiError(0, message);
   }

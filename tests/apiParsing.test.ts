@@ -276,6 +276,50 @@ describe("response shape normalization", () => {
     expect(normalizeHistoryList("nope")).toEqual([]);
   });
 
+  it("unwraps nested GET /api/history rows {history, media, file, progress_pct}", () => {
+    const list = normalizeHistoryList([
+      {
+        history: {
+          id: "h1",
+          task_file_id: "f1",
+          position_sec: 120.5,
+          duration_sec: 3600,
+          completed: false,
+          updated_at: "2026-01-02T03:04:05+00:00",
+        },
+        media: { id: "m1", title: "Сериал", poster_url: null },
+        file: { id: "f1", path: "Show/S01E01.mkv" },
+        progress_pct: 3,
+      },
+    ]);
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe("h1");
+    expect(list[0].task_file_id).toBe("f1");
+    expect(list[0].position_sec).toBe(120.5);
+    expect(list[0].duration_sec).toBe(3600);
+    expect(list[0].completed).toBe(false);
+    expect(list[0].media?.title).toBe("Сериал");
+    expect(list[0].file?.path).toBe("Show/S01E01.mkv");
+    expect(list[0].progress_pct).toBe(3);
+  });
+
+  it("normalizeHistory unwraps a nested history object", () => {
+    const history = normalizeHistory({
+      history: {
+        id: 9,
+        task_file_id: 8,
+        position_sec: "1",
+        duration_sec: "2",
+        completed: false,
+        updated_at: "u",
+      },
+    });
+    expect(history.id).toBe(9);
+    expect(history.task_file_id).toBe(8);
+    expect(history.position_sec).toBe(1);
+    expect(history.duration_sec).toBe(2);
+  });
+
   it("normalizes LibraryItem including season/episode coercion", () => {
     const item = normalizeLibraryItem({
       library_item: { id: 1, status: "ready", created_at: "c" },

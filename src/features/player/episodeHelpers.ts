@@ -147,3 +147,82 @@ export function isSeriesCatalog(
   if (catalog.kind === "series") return true;
   return catalogEpisodes(catalog).length > 0;
 }
+
+/** Episode row from `GET /api/media/{id}/episodes`. */
+export type MediaEpisodesResponse = {
+  media_id: string | number;
+  title: string;
+  kind: string;
+  episodes: Array<{
+    episode_id: string;
+    season: number;
+    episode: number;
+    episode_end?: number | null;
+    year?: number | null;
+    title?: string | null;
+    audio_tracks?: unknown[];
+    subtitle_tracks?: unknown[];
+  }>;
+};
+
+function toPlaybackEpisodeFromApi(raw: {
+  episode_id: string;
+  season: number;
+  episode: number;
+  episode_end?: number | null;
+  title?: string | null;
+  audio_tracks?: unknown[];
+}): PlaybackEpisode {
+  const episode: PlaybackEpisode = {
+    id: raw.episode_id,
+    season: Number(raw.season) || 0,
+    episode: Number(raw.episode) || 0,
+    // The episodes API has no per-episode playability flag; assume playable
+    // so the picker is usable. `playback.video` still gates the actual Play.
+    has_primary_video: true,
+  };
+  const end = Number(raw.episode_end);
+  if (Number.isFinite(end) && end > 0) episode.episode_end = end;
+  const title = typeof raw.title === "string" ? raw.title.trim() : "";
+  if (title) episode.title = title;
+  if (Array.isArray(raw.audio_tracks) && raw.audio_tracks.length > 0) {
+    episode.audio_tracks = raw.audio_tracks.map((t) => {
+      const r = (t ?? {}) as Record<string, unknown>;
+      return {
+        id: typeof r.id === "string" || typeof r.id === "number" ? r.id : 0,
+        language: String(r.language ?? "").toLowerCase(),
+        flags: Array.isArray(r.flags)
+          ? (r.flags.map((f) => String(f).toLowerCase()) as never)
+          : [],
+        embedded: r.embedded !== false,
+        ...(typeof r.label === "string" && r.label ? { label: r.label } : {}),
+        ...(typeof r.url === "string" && r.url ? { url: r.url } : {}),
+      };
+    });
+  }
+  return episode;
+}
+
+/**
+ * Build a `PlaybackCatalog` from `GET /api/media/{id}/episodes`.
+ * Used as a fallback when `GET /api/media/{id}/playback` omits `catalog`
+ * (the Seans backend currently does).
+ */
+export function mediaEpisodesToCatalog(
+  raw: unknown,
+): PlaybackCatalog | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const r = raw as MediaEpisodesResponse;
+  const list = Array.isArray(r.episodes) ? r.episodes : null;
+  if (!list) return null;
+  const kind =
+    String(r.kind ?? "").toLowerCase() === "movie" || list.length === 0
+      ? "movie"
+      : "series";
+  const episodes = list.map(toPlaybackEpisodeFromApi);
+  return {
+    kind,
+    files: episodes,
+    groups: groupEpisodesBySeason(episodes),
+  };
+}

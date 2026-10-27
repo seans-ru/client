@@ -3,6 +3,7 @@
  *
  * Contract-backed wrappers over `request<T>()`:
  *   GET  /api/auth/me
+ *   POST /api/auth/invite-keys
  *   GET  /api/files/{task_file_id}/url
  *   GET  /api/search?q=
  *   GET  /api/catalog/chart?type=&limit=
@@ -12,13 +13,14 @@
  *   GET  /api/media/{id}/reviews
  *   GET  /api/library
  *   PUT  /api/history
- *   GET  /api/history?limit=
+ *   GET  /api/history?limit=   (nested {history,media,file,progress_pct})
  *   POST /api/tasks
  *   GET  /api/tasks?active=
  *   POST /api/tasks/{id}/cancel
  *   POST /api/rooms
  *   GET  /api/rooms/{code}
  *   GET  /api/media/{id}/playback
+ *   GET  /api/media/{id}/episodes
  * Worker / torrent-worker endpoints are out of scope.
  */
 
@@ -45,6 +47,7 @@ import {
 import type {
   ApiId,
   FileUrlResponse,
+  HistoryListItem,
   HistoryResponse,
   LibraryItem,
   MediaDetail,
@@ -60,6 +63,26 @@ import type {
 /** GET /api/auth/me — hydrate the current user after login / on startup. */
 export async function fetchMe(signal?: AbortSignal): Promise<UserResponse> {
   return normalizeUser(await request<unknown>("/api/auth/me", { signal }));
+}
+
+/** `POST /api/auth/invite-keys` — create an invite key (requires `can_invite`). */
+export type InviteKeyResponse = {
+  key: string;
+  created_at: string;
+};
+
+export async function createInviteKey(
+  signal?: AbortSignal,
+): Promise<InviteKeyResponse> {
+  const raw = await request<unknown>("/api/auth/invite-keys", {
+    method: "POST",
+    signal,
+  });
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    key: typeof r.key === "string" ? r.key : "",
+    created_at: typeof r.created_at === "string" ? r.created_at : "",
+  };
 }
 
 /** GET /api/files/{task_file_id}/url — signed streaming URL. */
@@ -352,10 +375,14 @@ export async function putHistory(
   );
 }
 
-/** GET /api/history?limit= — recent watch history, newest first. */
+/**
+ * GET /api/history?limit= — recent watch history (continue-watching).
+ * The server returns nested rows `{history, media, file, progress_pct}`;
+ * `normalizeHistoryList` also accepts flat `HistoryResponse` objects.
+ */
 export async function fetchHistory(
   options: { limit?: number; signal?: AbortSignal } = {},
-): Promise<HistoryResponse[]> {
+): Promise<HistoryListItem[]> {
   const limit = toNumber(options.limit);
   const clamped =
     limit === null ? undefined : Math.min(200, Math.max(1, Math.trunc(limit)));

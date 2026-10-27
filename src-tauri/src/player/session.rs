@@ -689,11 +689,23 @@ pub fn toggle_fullscreen(app: &AppHandle) -> Result<(), String> {
     set_fullscreen(app, !current)
 }
 
-/// Keep the mpv child window sized to the Tauri window client area.
+/// Keep the mpv child window on the last known video rect (legacy fit when the
+/// DOM has not supplied one yet). Called after window resize / fullscreen.
 pub fn sync_host_size() {
     if let Ok(mut guard) = session().inner.lock() {
         if let Some(inner) = guard.as_mut() {
             inner.host.fit_parent();
+        }
+    }
+}
+
+/// Size the mpv child window to the HTML video area (client-relative
+/// physical pixels). Source of truth is the DOM rect measured in JS — this
+/// is what keeps the sidecar and control strip uncovered.
+pub fn sync_host_rect(x: i32, y: i32, width: i32, height: i32) {
+    if let Ok(mut guard) = session().inner.lock() {
+        if let Some(inner) = guard.as_mut() {
+            inner.host.set_video_rect(x, y, width, height);
         }
     }
 }

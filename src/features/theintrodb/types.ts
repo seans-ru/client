@@ -1,7 +1,7 @@
 /**
  * TheIntroDB segment types (M8).
  *
- * Contract: GET https://api.theintrodb.org/v3/media?tmdb_id=&season=&episode=
+ * Contract: GET https://api.theintrodb.org/v4/media?tmdb_id=&season=&episode=
  * Four segment kinds, each an array of `{start_ms, end_ms}` (nullable ends/starts).
  * Feature is silently off when `MediaDetail.tmdb_id` is null.
  */

@@ -49,7 +49,7 @@ export function EpisodePicker({
               return (
                 <li key={String(episode.id)}>
                   <Button
-                    variant={selected ? "primary" : "ghost"}
+                    variant="ghost"
                     size="sm"
                     className={`episode-picker-item${selected ? " episode-picker-item-selected" : ""}`}
                     disabled={!playable}

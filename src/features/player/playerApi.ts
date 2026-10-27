@@ -97,7 +97,19 @@ export async function playerDestroy(): Promise<void> {
   await invoke("player_destroy");
 }
 
-/** Re-fit the video child window after a Tauri window resize. */
-export async function playerSyncSize(): Promise<void> {
-  await invoke("player_sync_size");
+/** Client-relative video area rectangle in physical pixels (DOM measure). */
+export type VideoRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+/**
+ * Size the mpv child window. With `rect` the host matches the HTML video area
+ * exactly (sidecar and control strip stay visible); without it the Rust side
+ * re-applies the last known rect after a window resize / fullscreen toggle.
+ */
+export async function playerSyncSize(rect?: VideoRect | null): Promise<void> {
+  await invoke("player_sync_size", { rect: rect ?? null });
 }

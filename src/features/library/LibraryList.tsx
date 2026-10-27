@@ -177,7 +177,7 @@ function LibraryItemCard({
           <PosterCard
             title={media.title}
             posterUrl={media.poster_url}
-            subtitle={media.year > 0 ? String(media.year) : undefined}
+            subtitle={media.year != null && media.year > 0 ? String(media.year) : undefined}
           />
         </div>
         <div className="library-item-info">
@@ -185,8 +185,8 @@ function LibraryItemCard({
             {media.title}
           </h2>
           <p className="library-item-meta">
-            {media.year > 0 ? <span>{media.year}</span> : null}
-            {media.year > 0 ? <span aria-hidden="true"> · </span> : null}
+            {media.year != null && media.year > 0 ? <span>{media.year}</span> : null}
+            {media.year != null && media.year > 0 ? <span aria-hidden="true"> · </span> : null}
             <span>{formatBytes(total_size)}</span>
           </p>
           <div className="library-item-badges">

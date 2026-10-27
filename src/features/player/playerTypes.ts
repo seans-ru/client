@@ -102,4 +102,4 @@ export function normalizeSnapshot(raw: unknown): PlayerSnapshot {
 }
 
 /** Player surface phase shown by `PlayerScreen`. */
-export type PlayerPhase = "loading" | "ready" | "error";
+export type PlayerPhase = "loading" | "waiting" | "ready" | "error";

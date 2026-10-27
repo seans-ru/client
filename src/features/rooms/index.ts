@@ -7,8 +7,10 @@ export { RoomPanel } from "./RoomPanel";
 export type { RoomPanelProps } from "./RoomPanel";
 export {
   buildRoomWsUrl,
+  isAbsoluteWsUrl,
   isHost,
   memberLabel,
+  resolveRoomWsUrl,
   roomCloseMessage,
   roomShareUrl,
   shouldApplyRemoteState,

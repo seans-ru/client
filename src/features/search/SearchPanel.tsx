@@ -17,7 +17,7 @@ import { SEARCH_MIN_QUERY_LENGTH } from "./searchHelpers";
 
 function mediaSubtitle(item: MediaSearchResult): string {
   const parts: string[] = [];
-  if (item.year > 0) parts.push(String(item.year));
+  if (item.year != null && item.year > 0) parts.push(String(item.year));
   if (item.kp_type) parts.push(item.kp_type);
   return parts.join(" · ");
 }

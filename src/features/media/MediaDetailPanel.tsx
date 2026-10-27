@@ -39,8 +39,8 @@ function MediaOverview({ detail }: { detail: MediaDetail }) {
         ) : null}
 
         <p className="media-meta">
-          {detail.year > 0 ? <span>{detail.year}</span> : null}
-          {detail.year > 0 && detail.genres.length > 0 ? <span aria-hidden="true"> · </span> : null}
+          {detail.year != null && detail.year > 0 ? <span>{detail.year}</span> : null}
+          {detail.year != null && detail.year > 0 && detail.genres.length > 0 ? <span aria-hidden="true"> · </span> : null}
           {detail.genres.length > 0 ? <span>{detail.genres.join(", ")}</span> : null}
         </p>
 

@@ -178,8 +178,19 @@ function optNum(value: unknown): number | undefined {
   return n === undefined || n === null ? undefined : n;
 }
 
+/**
+ * Boolean coercion that survives the wire: JSON bool, 0/1, or "true"/"1".
+ * Strict `typeof === "boolean"` used to turn `"true"` / `1` into `false`.
+ */
 function bool(value: unknown, fallback = false): boolean {
-  return typeof value === "boolean" ? value : fallback;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) && value !== 0;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (v === "true" || v === "1" || v === "yes") return true;
+    if (v === "false" || v === "0" || v === "no" || v === "") return false;
+  }
+  return fallback;
 }
 
 function id(value: unknown): ApiId {
@@ -247,16 +258,25 @@ export function normalizePlaybackSegment(raw: unknown): PlaybackSegment {
 
 export function normalizePlaybackStream(raw: unknown): PlaybackStream {
   const r = asRaw(raw);
+  const segments = Array.isArray(r.segments)
+    ? r.segments.map(normalizePlaybackSegment)
+    : [];
+  const complete = bool(r.complete);
+  const maxSeekableBytes = num(r.max_seekable_bytes);
+  // `ready` is the worker's stream_ready flag (aliases: `stream_ready`).
+  // The flag is advisory: a non-empty seekable prefix is what actually lets
+  // progressive playback start (contract §3.2 — segment URLs only exist
+  // inside `max_seekable_bytes`), so a stale/false flag must not block it.
+  const readyFlag = bool(r.ready ?? r.stream_ready);
+  const ready = complete || readyFlag || maxSeekableBytes > 0;
   const stream: PlaybackStream = {
-    ready: bool(r.ready),
-    complete: bool(r.complete),
-    max_seekable_bytes: num(r.max_seekable_bytes),
+    ready,
+    complete,
+    max_seekable_bytes: maxSeekableBytes,
     percent_downloaded: num(r.percent_downloaded),
     percent_seekable: num(r.percent_seekable),
     segment_size: num(r.segment_size),
-    segments: Array.isArray(r.segments)
-      ? r.segments.map(normalizePlaybackSegment)
-      : [],
+    segments,
   };
   const size = optNum(r.size_bytes);
   if (size !== undefined) stream.size_bytes = size;

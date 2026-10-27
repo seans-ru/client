@@ -15,6 +15,7 @@
 
 pub mod commands;
 
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -32,6 +33,13 @@ pub struct SegmentSpec {
     pub available: bool,
 }
 
+/// Fetch granularity inside one S3 segment. Small enough that the first byte
+/// of a seek lands quickly; large enough to amortize request overhead.
+const FETCH_CHUNK: u64 = 512 * 1024;
+
+/// Chunk-cache capacity (chunk = `FETCH_CHUNK` bytes → ~32 MiB total).
+const CHUNK_CACHE_CAP: usize = 64;
+
 #[derive(Debug, Clone)]
 pub struct ProgressiveConfig {
     /// Total virtual file size (`video.size_bytes`).
@@ -47,6 +55,56 @@ struct LiveState {
     stop: Arc<AtomicBool>,
     /// Atomic copy of the ceiling for lock-free Range checks.
     max_seekable: AtomicU64,
+}
+
+/// Shared ureq agent — one TLS session to S3 across all segment fetches.
+/// A fresh agent per fetch cost a full handshake on every seek.
+fn shared_agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::builder()
+            .timeout_connect(Duration::from_secs(10))
+            .timeout_read(Duration::from_secs(30))
+            .build()
+    })
+}
+
+/// Chunk cache key: (segment index, chunk start offset inside the segment).
+type ChunkKey = (i64, u64);
+
+struct ChunkCache {
+    map: HashMap<ChunkKey, Arc<Vec<u8>>>,
+    order: VecDeque<ChunkKey>,
+}
+
+fn chunk_cache() -> &'static Mutex<ChunkCache> {
+    static CACHE: OnceLock<Mutex<ChunkCache>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        Mutex::new(ChunkCache {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+        })
+    })
+}
+
+fn cache_get(key: &ChunkKey) -> Option<Arc<Vec<u8>>> {
+    chunk_cache()
+        .lock()
+        .ok()
+        .and_then(|c| c.map.get(key).cloned())
+}
+
+fn cache_put(key: ChunkKey, bytes: Arc<Vec<u8>>) {
+    if let Ok(mut c) = chunk_cache().lock() {
+        if c.map.insert(key, bytes).is_none() {
+            c.order.push_back(key);
+            while c.order.len() > CHUNK_CACHE_CAP {
+                if let Some(old) = c.order.pop_front() {
+                    c.map.remove(&old);
+                }
+            }
+        }
+    }
 }
 
 struct ServerHandle {
@@ -129,6 +187,11 @@ pub fn update(
 }
 
 fn stop_internal() {
+    // Drop cached chunks — they belong to the previous file/URL set.
+    if let Ok(mut c) = chunk_cache().lock() {
+        c.map.clear();
+        c.order.clear();
+    }
     let live = live_slot().lock().ok().and_then(|mut g| g.take());
     if let Some(live) = live {
         live.stop.store(true, Ordering::SeqCst);
@@ -317,6 +380,8 @@ fn parse_range(value: &str) -> Option<(u64, u64)> {
 }
 
 /// Fetch `[start, end_inclusive]` of the virtual file from segments and write it.
+/// Reads go out in `FETCH_CHUNK` pieces so a seek lands after the first chunk,
+/// not after a whole 8 MiB segment. Chunks are cached for re-seeks.
 fn serve_byte_range(
     stream: &mut TcpStream,
     state: &Arc<LiveState>,
@@ -355,36 +420,49 @@ fn serve_byte_range(
             continue;
         };
 
+        // Walk the needed part of this segment in chunk-sized pieces.
         let seg_from = cursor.max(seg.start);
         let seg_to = (end_inclusive + 1).min(seg.end);
-        if seg_to <= seg_from {
-            cursor = seg.end.max(cursor + 1);
-            continue;
-        }
+        let mut pos = seg_from;
+        while pos < seg_to {
+            let chunk_start = ((pos - seg.start) / FETCH_CHUNK) * FETCH_CHUNK;
+            let chunk_end = (chunk_start + FETCH_CHUNK).min(seg.end - seg.start);
+            let key: ChunkKey = (seg.index, chunk_start);
+            let chunk = match cache_get(&key) {
+                Some(bytes) => bytes,
+                None => {
+                    let remote_to = chunk_start + (chunk_end - chunk_start) - 1;
+                    match fetch_segment_range(&seg.url, chunk_start, remote_to) {
+                        Ok(bytes) => {
+                            let bytes = Arc::new(bytes);
+                            cache_put(key, bytes.clone());
+                            bytes
+                        }
+                        Err(_) => {
+                            // Fail closed with zeros for this chunk only —
+                            // the demuxer needs a contiguous byte stream.
+                            Arc::new(vec![0u8; (chunk_end - chunk_start) as usize])
+                        }
+                    }
+                }
+            };
 
-        // Range inside the remote segment object.
-        let remote_from = seg_from - seg.start;
-        let remote_to = seg_to - seg.start - 1;
-        match fetch_segment_range(&seg.url, remote_from, remote_to) {
-            Ok(bytes) => {
-                let mut pos = 0usize;
-                while pos < bytes.len() {
-                    let n = stream.write(&bytes[pos..])?;
+            let from_in_chunk = (pos - seg.start - chunk_start) as usize;
+            let to_in_chunk = ((seg_to - seg.start - chunk_start) as usize).min(chunk.len());
+            if to_in_chunk > from_in_chunk {
+                let slice = &chunk[from_in_chunk..to_in_chunk];
+                let mut off = 0usize;
+                while off < slice.len() {
+                    let n = stream.write(&slice[off..])?;
                     if n == 0 {
                         return Ok(());
                     }
-                    pos += n;
+                    off += n;
                 }
             }
-            Err(_) => {
-                let len = (seg_to - seg_from) as usize;
-                let zeros = vec![0u8; len.min(64 * 1024)];
-                let mut left = len;
-                while left > 0 {
-                    let n = left.min(zeros.len());
-                    stream.write_all(&zeros[..n])?;
-                    left -= n;
-                }
+            pos = seg.start + chunk_start + to_in_chunk as u64;
+            if to_in_chunk == 0 {
+                break;
             }
         }
         cursor = seg_to;
@@ -394,11 +472,7 @@ fn serve_byte_range(
 
 /// HTTP(S) GET with a byte range from a segment URL (S3).
 fn fetch_segment_range(url: &str, from: u64, to: u64) -> Result<Vec<u8>, String> {
-    let agent = ureq::builder()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(60))
-        .build();
-    let resp = agent
+    let resp = shared_agent()
         .get(url)
         .set("Range", &format!("bytes={from}-{to}"))
         .call()

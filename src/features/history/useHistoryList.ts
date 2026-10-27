@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { fetchHistory } from "../../api/endpoints";
-import type { HistoryResponse } from "../../api/types";
+import type { HistoryListItem } from "../../api/types";
 
 /** Default page size for the History screen (contract allows 1..200). */
 export const HISTORY_LIST_LIMIT = 50;
@@ -13,7 +13,7 @@ export const HISTORY_LIST_LIMIT = 50;
 export type HistoryListStatus = "loading" | "ready" | "error";
 
 export type HistoryListState = {
-  items: HistoryResponse[];
+  items: HistoryListItem[];
   status: HistoryListStatus;
   error: string | null;
   refresh: () => void;
@@ -22,7 +22,7 @@ export type HistoryListState = {
 export function useHistoryList(
   limit: number = HISTORY_LIST_LIMIT,
 ): HistoryListState {
-  const [items, setItems] = useState<HistoryResponse[]>([]);
+  const [items, setItems] = useState<HistoryListItem[]>([]);
   const [status, setStatus] = useState<HistoryListStatus>("loading");
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);

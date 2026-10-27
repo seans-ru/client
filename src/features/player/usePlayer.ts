@@ -33,6 +33,8 @@ export type UsePlayerState = {
   phase: PlayerPhase;
   snapshot: PlayerSnapshot;
   error: string | null;
+  /** Status copy for the waiting phase (file/segments not ready yet). */
+  waitMessage: string | null;
   /** Fetch + open a presigned URL (call after `fetchFileUrl`). */
   start: (
     url: string,
@@ -44,6 +46,8 @@ export type UsePlayerState = {
   ) => Promise<void>;
   /** Force the error phase (API failure before `start`). */
   fail: (message: string) => void;
+  /** Waiting phase: keep polling/retrying, show status instead of an error. */
+  wait: (message: string) => void;
   play: () => Promise<void>;
   pause: () => Promise<void>;
   togglePause: () => Promise<void>;
@@ -59,7 +63,11 @@ export type UsePlayerState = {
   setSubtitleTrack: (id: number | null) => Promise<void>;
   refreshTracks: () => Promise<void>;
   setFullscreen: (enabled: boolean) => Promise<void>;
-  syncSize: () => Promise<void>;
+  /**
+   * Fit the mpv child window. Pass the DOM video-area rect (physical px) to
+   * keep sidecar / control strip uncovered; omit to re-apply the last rect.
+   */
+  syncSize: (rect?: { x: number; y: number; width: number; height: number } | null) => Promise<void>;
   retry: () => void;
 };
 
@@ -67,6 +75,7 @@ export function usePlayer(): UsePlayerState {
   const [phase, setPhase] = useState<PlayerPhase>("loading");
   const [snapshot, setSnapshot] = useState<PlayerSnapshot>(DEFAULT_SNAPSHOT);
   const [error, setError] = useState<string | null>(null);
+  const [waitMessage, setWaitMessage] = useState<string | null>(null);
   const [retryToken, setRetryToken] = useState(0);
   const lastUrlRef = useRef<{
     url: string;
@@ -91,6 +100,7 @@ export function usePlayer(): UsePlayerState {
     };
     setPhase("loading");
     setError(null);
+    setWaitMessage(null);
     setSnapshot(DEFAULT_SNAPSHOT);
     try {
       await openPlayerUrl(url, {
@@ -99,7 +109,7 @@ export function usePlayer(): UsePlayerState {
         maxSeekableSec: options?.maxSeekableSec ?? null,
       });
       // Re-fit the mpv child HWND now that the player surface is mounted.
-      void playerSyncSize().catch(() => {});
+      void playerSyncSize(null).catch(() => {});
       // Pull the post-open snapshot (covers errors emitted before listen attaches).
       const state = await playerGetState().catch(() => null);
       if (state) {
@@ -129,7 +139,14 @@ export function usePlayer(): UsePlayerState {
 
   const fail = useCallback((message: string) => {
     setError(message);
+    setWaitMessage(null);
     setPhase("error");
+  }, []);
+
+  const wait = useCallback((message: string) => {
+    setError(null);
+    setWaitMessage(message);
+    setPhase("waiting");
   }, []);
 
   // Snapshot stream + reopen on retry.
@@ -220,7 +237,16 @@ export function usePlayer(): UsePlayerState {
     (enabled: boolean) => wrap(() => playerSetFullscreen(enabled)),
     [wrap],
   );
-  const syncSize = useCallback(() => wrap(playerSyncSize), [wrap]);
+  const syncSize = useCallback(
+    async (rect?: { x: number; y: number; width: number; height: number } | null) => {
+      try {
+        await playerSyncSize(rect ?? null);
+      } catch {
+        // Non-fatal: the host keeps its previous size until the next layout pass.
+      }
+    },
+    [],
+  );
 
   const refreshTracks = useCallback(async () => {
     try {
@@ -235,8 +261,10 @@ export function usePlayer(): UsePlayerState {
     phase,
     snapshot,
     error,
+    waitMessage,
     start,
     fail,
+    wait,
     play,
     pause,
     togglePause,

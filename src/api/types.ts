@@ -17,6 +17,11 @@ export type UserResponse = {
   /** Optional server-side usage; else client sums library total_size. */
   used_bytes?: number;
   created_at: string;
+  /** Present on `GET /api/auth/me` (backend UserResponse). */
+  is_admin?: boolean;
+  /** Subscription plan code (`free` | `plus` | `pro`). */
+  plan?: string;
+  plan_expires_at?: string | null;
 };
 
 export type TokenResponse = {
@@ -27,9 +32,11 @@ export type TokenResponse = {
 
 export type MediaSearchResult = {
   id: ApiId;
-  kp_id: number;
+  /** Kinopoisk id; null when unknown. */
+  kp_id: number | null;
   title: string;
-  year: number;
+  /** Release year; null when unknown. */
+  year: number | null;
   poster_url: string | null;
   kp_type: string;
   /** May arrive as number or numeric string. */
@@ -37,8 +44,8 @@ export type MediaSearchResult = {
 };
 
 export type MediaDetail = MediaSearchResult & {
-  original_title: string;
-  overview: string;
+  original_title: string | null;
+  overview: string | null;
   genres: string[];
   updated_at: string;
   /** May arrive as number or numeric string. */
@@ -54,9 +61,9 @@ export type TorrentReleaseResponse = {
   size_bytes: number;
   seeders: number;
   leechers: number;
-  quality: string;
-  voiceover: string;
-  magnet: string;
+  quality: string | null;
+  voiceover: string | null;
+  magnet: string | null;
   /** Present when the API exposes release file lists for task creation. */
   file_paths?: string[];
 };
@@ -70,13 +77,19 @@ export type TaskResponse = {
   progress_pct: number;
   /** May arrive as number or numeric string. */
   speed_bps: number;
-  stage: string;
+  stage: string | null;
   error?: string;
   created_at: string;
-  updated_at: string;
+  /** Absent on `POST /api/tasks` create response (TaskResponse schema). */
+  updated_at?: string;
 };
 
-export type TaskDetailResponse = TaskResponse;
+/** `GET /api/tasks` / cancel — richer task with media/file join ids. */
+export type TaskDetailResponse = TaskResponse & {
+  media_id?: ApiId;
+  task_file_id?: ApiId | null;
+  updated_at?: string;
+};
 
 export type HistoryResponse = {
   id: ApiId;
@@ -89,12 +102,37 @@ export type HistoryResponse = {
   updated_at: string;
 };
 
+/** Media snippet attached to a history row (`GET /api/history` nested payload). */
+export type HistoryMediaSnippet = {
+  id: ApiId;
+  title: string;
+  poster_url: string | null;
+};
+
+/** File snippet attached to a history row (`GET /api/history` nested payload). */
+export type HistoryFileSnippet = {
+  id: ApiId;
+  path: string;
+};
+
+/**
+ * `GET /api/history` item. The server returns a nested envelope
+ * `{history, media, file, progress_pct}`; flat `HistoryResponse` rows are
+ * also accepted. `PUT /api/history` still returns a plain `HistoryResponse`.
+ */
+export type HistoryListItem = HistoryResponse & {
+  media?: HistoryMediaSnippet;
+  file?: HistoryFileSnippet;
+  /** Server-computed 0–100; falls back to position/duration when absent. */
+  progress_pct?: number;
+};
+
 export type ReviewResponse = {
   id: ApiId;
   user_id: ApiId;
   media_item_id: ApiId;
   score: number;
-  review: string;
+  review: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -122,7 +160,7 @@ export type LibraryItem = {
     title: string;
     poster_url: string | null;
     kp_type: string;
-    year: number;
+    year: number | null;
   };
   files: LibraryFile[];
   total_size: number;

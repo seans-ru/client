@@ -10,6 +10,7 @@ export {
   formatHistoryUpdatedAt,
   historyFileFallback,
   historyProgressPercent,
+  historyRowTitle,
   isHistoryCompleted,
   resumePositionFromHistory,
   sortHistoryForContinue,
