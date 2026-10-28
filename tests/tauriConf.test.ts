@@ -65,10 +65,11 @@ describe("tauri.conf.json identity", () => {
     };
     expect(Array.isArray(updater.endpoints)).toBe(true);
     expect(updater.endpoints?.[0]).toBe(
-      "https://seans.tedeshi.ru/updates/{{target}}/{{current_version}}",
+      "https://seans.tedeshi.ru/updates/latest.json",
     );
-    // pubkey is a placeholder until a release signing key exists (schema-valid string).
+    // Pinned release signing key (matches keys/tauri-updater.key, private half in CI secrets).
     expect(typeof updater.pubkey).toBe("string");
+    expect(updater.pubkey?.length ?? 0).toBeGreaterThan(0);
   });
 
   it("registers the seans scheme for desktop deep links", () => {

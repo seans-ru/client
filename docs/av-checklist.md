@@ -105,11 +105,12 @@ before each public release. Fill in the result column.
    set (updater artifacts) and the private code-signing cert available.
 2. Sign `seans.exe` (inside the installer) and the NSIS/MSI installers:
    `signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 ...`
-3. Set `plugins.updater.pubkey` in `tauri.conf.json` to the public key that
-   matches the updater signing key (currently an empty placeholder).
-4. Publish the update JSON + artifacts to
-   `https://seans.tedeshi.ru/updates/<target>/<version>` so the
-   `{{target}}/{{current_version}}` endpoint template resolves.
+3. `plugins.updater.pubkey` in `src-tauri/tauri.conf.json` is already pinned to
+   the release key (private half: `keys/tauri-updater.key` locally / the
+   `TAURI_SIGNING_PRIVATE_KEY` CI secret — never committed).
+4. Publish the update JSON + artifacts to `updates/` on S3 so
+   `https://seans.tedeshi.ru/updates/latest.json` resolves (done by
+   `.github/workflows/build-updates.yml` on every push to main).
 5. Re-run the Defender smoke table above on the signed binaries.
 
 ## References in this repo

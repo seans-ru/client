@@ -57,6 +57,44 @@ Installer output: `src-tauri/target/release/bundle/`.
 
 VersionInfo (CompanyName=`bundle.publisher`, ProductName, FileVersion, ProductVersion) is embedded by `tauri-build` from `src-tauri/tauri.conf.json` so the binary is ready for Authenticode signing later. Do not pack with UPX or any runtime DLL downloader — antivirus false positives.
 
+Local release builds also need the updater signing key (updater artifacts are signed at build time):
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = "keys/tauri-updater.key"   # gitignored; never commit
+npm run tauri build
+```
+
+## Autobuild & updates (CI)
+
+Every push to `main` runs `.github/workflows/build-updates.yml` on a Windows runner: typecheck + tests → libmpv fetch → signed `tauri build` with version `0.1.<run_number>` → upload installers to S3 → rewrite the updater manifest.
+
+S3 layout (bucket):
+
+```
+updates/latest.json                                 # Tauri updater manifest
+updates/0.1.47/Seans_0.1.47_x64-setup.exe[.sig]     # NSIS — update payload
+updates/0.1.47/Seans_0.1.47_x64_en-US.msi[.sig]     # MSI — fresh installs
+```
+
+The client checks `https://seans.tedeshi.ru/updates/latest.json`
+(`src-tauri/tauri.conf.json` → `plugins.updater.endpoints`) and applies the NSIS package through the OS installer after minisign verification against `plugins.updater.pubkey`.
+
+Repository secrets the workflow needs:
+
+| Secret | Value |
+|--------|-------|
+| `TAURI_SIGNING_PRIVATE_KEY` | contents of `keys/tauri-updater.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | empty (current key has no password) |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | S3 keys for the public bucket `seans-update` (not the media keys) |
+
+S3 target is hardcoded in the workflow: `https://s3.buckets.ru`, bucket `seans-update`, region `ru-1`, path-style. Layout: `updates/latest.json` + `updates/<version>/*`. Two provider quirks are already handled in the workflow: path-style addressing (`aws configure set default.s3.addressing_style path`) and disabled flexible checksums (`AWS_REQUEST_CHECKSUM_CALCULATION=when_required` — the API rejects `aws-chunked` CRC32 trailers with `SignatureDoesNotMatch`).
+
+Serving: the `seans.tedeshi.ru` Caddyfile in `D:\projects\tedeshi\seans` reverse-proxies `https://seans.tedeshi.ru/updates/*` → the bucket's public domain `https://0bff548e3a0fce22fa42f4e3c39da76c.bckt.ru/`. Public reads go through that domain only — the path-style API on `s3.buckets.ru` is auth-only, so no bucket policy is needed (the bucket itself is the public one; the media bucket `seans` stays private). Objects are still minisign-signed by the updater.
+
+Versioning: committed `version` in `tauri.conf.json` is the `0.1.x` baseline; CI overrides it per build via `tauri build --config '{"version":"0.1.<run_number>"}'`. Run numbers only grow, so every committed build is a valid update for older installs. To cut a `0.2.0` line, bump the baseline in `tauri.conf.json` + `package.json` + `src-tauri/Cargo.toml`.
+
+The signing keypair is generated once with `npx tauri signer generate -w keys/tauri-updater.key`. Losing the private key breaks updates for shipped builds — keep a backup outside git.
+
 ## Player / libmpv
 
 Playback uses **in-process libmpv** (not `mpv.exe`, not a sidecar process).

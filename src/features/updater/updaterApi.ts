@@ -65,12 +65,11 @@ function toUpdateHandle(raw: unknown): UpdateHandle | null {
 }
 
 /**
- * Fail closed until `plugins.updater.pubkey` holds a real minisign key.
- * An empty pubkey would install an unsigned payload once the endpoint is live
- * (see docs/av-checklist.md). Flip to true only after the key is pinned in
- * src-tauri/tauri.conf.json for a release build.
+ * Signing is configured: `plugins.updater.pubkey` holds the release minisign
+ * key (private half lives in CI secrets only — see docs/av-checklist.md).
+ * Keep false only if the pubkey is ever emptied again.
  */
-export const UPDATER_SIGNING_READY = false;
+export const UPDATER_SIGNING_READY = true;
 
 /**
  * Check the configured endpoint for a newer release.

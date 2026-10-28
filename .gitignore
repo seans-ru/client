@@ -6,6 +6,8 @@ src-tauri/gen/
 .DS_Store
 .vscode/
 .idea/
+# Updater signing keypair: private half must never be committed (CI secret only).
+keys/
 # Bundled libmpv binaries (fetched at build time by scripts/fetch-mpv.ps1).
 src-tauri/resources/mpv/*.dll
 src-tauri/resources/mpv/*.exe
