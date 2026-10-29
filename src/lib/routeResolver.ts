@@ -58,6 +58,32 @@ export function matchRoomRoute(hash: string): string | null {
   return m ? m[1] : null;
 }
 
+const PENDING_ROUTE_KEY = "seans.pendingRoute";
+
+/**
+ * Remember the route an anonymous user was heading to (e.g. a shared room
+ * link) so login can return them there instead of home.
+ */
+export function stashPendingRoute(route: string): void {
+  if (route === ROUTES.login || route === ROUTES.home) return;
+  try {
+    sessionStorage.setItem(PENDING_ROUTE_KEY, route);
+  } catch {
+    // storage may be unavailable — login falls back to home
+  }
+}
+
+/** Consume the stashed pre-login destination (one-shot). */
+export function takePendingRoute(): string | null {
+  try {
+    const value = sessionStorage.getItem(PENDING_ROUTE_KEY);
+    if (value) sessionStorage.removeItem(PENDING_ROUTE_KEY);
+    return value;
+  } catch {
+    return null;
+  }
+}
+
 /** Extract the media id from a `#/media/{id}` hash route, if any. */
 export function matchMediaRoute(hash: string): string | null {
   const m = /^#\/media\/([^/]+)$/.exec(hash);

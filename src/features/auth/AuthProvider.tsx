@@ -24,7 +24,7 @@ import {
   saveSessionToken,
   setSessionToken,
 } from "../../api/session";
-import { ROUTES } from "../../lib/routeResolver";
+import { ROUTES, takePendingRoute } from "../../lib/routeResolver";
 import type { UserResponse } from "../../api/types";
 import {
   buildAuthorizeUrl,
@@ -125,7 +125,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(me);
           setStatus("authenticated");
           setLoginError(null);
-          navigate(ROUTES.home);
+          // Return to the pre-login destination (shared room link etc.).
+          navigate(takePendingRoute() ?? ROUTES.home);
         } catch {
           await clearSessionToken().catch(() => {});
           setUser(null);

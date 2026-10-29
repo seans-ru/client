@@ -16,6 +16,7 @@ import {
   resolveLegacyRoute,
   resolveRoute,
   ROUTES,
+  stashPendingRoute,
 } from "./lib/routeResolver";
 import { AuthProvider, useAuth } from "./features/auth";
 import type { AuthCallbackDetail } from "./features/auth";
@@ -103,6 +104,8 @@ function Router() {
       return;
     }
     if (status === "anonymous" && route !== ROUTES.login) {
+      // Keep the destination (e.g. a shared room link) across the login step.
+      stashPendingRoute(route);
       navigate(ROUTES.login);
     }
   }, [status, route]);
