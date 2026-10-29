@@ -19,6 +19,7 @@ import {
 } from "./lib/routeResolver";
 import { AuthProvider, useAuth } from "./features/auth";
 import type { AuthCallbackDetail } from "./features/auth";
+import { useDiscordJoin } from "./features/discord";
 import { UpdaterProvider } from "./features/updater";
 import { LoadingSlot } from "./design/slots";
 import { AppShell } from "./design/AppShell";
@@ -121,6 +122,9 @@ function Router() {
 }
 
 function Shell() {
+  // Discord join button → `#/room/{code}` (warm event / cold launch / pending).
+  useDiscordJoin();
+
   useEffect(() => {
     // Deep links delivered while the app is running (Tauri deep-link plugin).
     let unlisten: (() => void) | undefined;

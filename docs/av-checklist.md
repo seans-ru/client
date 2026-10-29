@@ -19,6 +19,7 @@ repository. Re-verify every item before a public release build.
 | 8 | **Updater does not bypass the OS installer** | `tauri-plugin-updater` downloads the release package from the configured HTTPS endpoint and applies it via the same NSIS/MSI installer the user originally installed with. Updates are not hot-patched into the running EXE and no third-party binary is executed outside the installer chain. | `src-tauri/tauri.conf.json` `plugins.updater`, `src/features/updater/` |
 | 9 | **No obfuscation / anti-debug tricks** | TypeScript is compiled normally (Vite/esbuild minify is standard bundling, not a packer). Rust is LTO-optimized but not obfuscated. No anti-debug, no time bombs, no self-delete. | `vite.config.ts`, `src-tauri/Cargo.toml` |
 | 10 | **HTTPS-only update endpoint** | `plugins.updater.endpoints` is `https://seans.tedeshi.ru/...` (TLS). No plaintext update channels. | `src-tauri/tauri.conf.json` |
+| 11 | **Protocol handlers are own-app launchers only** | Two HKCU `Software\Classes` URL protocols, both standard launchers (no service, no hijacking of foreign schemes): `seans` (deep links, registered by `tauri-plugin-deep-link`) and `discord-{APP_ID}` (Discord Join cold-start, a clone of discord-rpc's `Discord_Register` — command is our own exe with `"%1"`). Written on every startup, HKCU only. | `src-tauri/src/discord.rs` `register_discord_launcher`, `src-tauri/src/lib.rs` |
 
 ### Updater note (temp directory and installers)
 

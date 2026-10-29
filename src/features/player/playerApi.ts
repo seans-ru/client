@@ -113,3 +113,8 @@ export type VideoRect = {
 export async function playerSyncSize(rect?: VideoRect | null): Promise<void> {
   await invoke("player_sync_size", { rect: rect ?? null });
 }
+
+/** Loopback URL of the raw RGBA frame stream (`http://127.0.0.1:<port>/frames`). */
+export async function playerFramesUrl(): Promise<string> {
+  return invoke<string>("player_frames_url");
+}

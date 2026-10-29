@@ -45,6 +45,53 @@ pub const MPV_END_FILE_REASON_STOP: c_int = 2;
 pub const MPV_END_FILE_REASON_QUIT: c_int = 3;
 pub const MPV_END_FILE_REASON_ERROR: c_int = 4;
 
+/* ----------------------------------------------------------- render API */
+
+/// `mpv_render_param.api_type` value for the OpenGL backend.
+pub const MPV_RENDER_API_TYPE_OPENGL: &[u8] = b"opengl\0";
+
+pub const MPV_RENDER_PARAM_INVALID: c_int = 0;
+pub const MPV_RENDER_PARAM_API_TYPE: c_int = 1;
+pub const MPV_RENDER_PARAM_OPENGL_INIT_PARAMS: c_int = 2;
+pub const MPV_RENDER_PARAM_OPENGL_FBO: c_int = 3;
+pub const MPV_RENDER_PARAM_FLIP_Y: c_int = 4;
+
+/// `mpv_render_context_update` bit: a new video frame should be rendered.
+pub const MPV_RENDER_UPDATE_FRAME: u64 = 1;
+
+#[repr(C)]
+pub struct MpvRenderContext {
+    _private: [u8; 0],
+}
+
+/// `mpv_get_proc_address_fn` — resolve GL entry points for the render API.
+pub type MpvGetProcAddressFn =
+    unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+
+#[repr(C)]
+pub struct MpvOpenGLInitParams {
+    pub get_proc_address: Option<MpvGetProcAddressFn>,
+    pub get_proc_address_ctx: *mut c_void,
+}
+
+/// Render target: FBO 0 = the current GL context's default framebuffer.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MpvOpenGLFbo {
+    pub fbo: c_int,
+    pub w: c_int,
+    pub h: c_int,
+    pub internal_format: c_int,
+}
+
+#[repr(C)]
+pub struct MpvRenderParam {
+    pub type_: c_int,
+    pub data: *mut c_void,
+}
+
+pub type MpvRenderUpdateFn = Option<unsafe extern "C" fn(*mut c_void)>;
+
 /* --------------------------------------------------------------- raw types */
 
 #[repr(C)]
@@ -126,6 +173,17 @@ type FnObserveProperty = unsafe extern "C" fn(
 type FnWaitEvent = unsafe extern "C" fn(*mut MpvHandle, f64) -> *mut MpvEvent;
 type FnFree = unsafe extern "C" fn(*mut c_void);
 type FnFreeNodeContents = unsafe extern "C" fn(*mut MpvNode);
+type FnRenderContextCreate = unsafe extern "C" fn(
+    *mut *mut MpvRenderContext,
+    *mut MpvHandle,
+    *mut MpvRenderParam,
+) -> c_int;
+type FnRenderContextFree = unsafe extern "C" fn(*mut MpvRenderContext);
+type FnRenderContextSetUpdateCallback =
+    unsafe extern "C" fn(*mut MpvRenderContext, MpvRenderUpdateFn, *mut c_void);
+type FnRenderContextUpdate = unsafe extern "C" fn(*mut MpvRenderContext) -> u64;
+type FnRenderContextRender =
+    unsafe extern "C" fn(*mut MpvRenderContext, *mut MpvRenderParam) -> c_int;
 
 /// Resolved libmpv entry points. Keeps the `Library` alive for symbol lifetime.
 pub struct MpvApi {
@@ -144,6 +202,11 @@ pub struct MpvApi {
     wait_event: FnWaitEvent,
     free: FnFree,
     free_node_contents: FnFreeNodeContents,
+    render_context_create: FnRenderContextCreate,
+    render_context_free: FnRenderContextFree,
+    render_context_set_update_callback: FnRenderContextSetUpdateCallback,
+    render_context_update: FnRenderContextUpdate,
+    render_context_render: FnRenderContextRender,
 }
 
 fn resolve<T: Copy>(lib: &libloading::Library, name: &[u8]) -> Result<T, String> {
@@ -189,6 +252,14 @@ impl MpvApi {
             wait_event: resolve(&lib, b"mpv_wait_event\0")?,
             free: resolve(&lib, b"mpv_free\0")?,
             free_node_contents: resolve(&lib, b"mpv_free_node_contents\0")?,
+            render_context_create: resolve(&lib, b"mpv_render_context_create\0")?,
+            render_context_free: resolve(&lib, b"mpv_render_context_free\0")?,
+            render_context_set_update_callback: resolve(
+                &lib,
+                b"mpv_render_context_set_update_callback\0",
+            )?,
+            render_context_update: resolve(&lib, b"mpv_render_context_update\0")?,
+            render_context_render: resolve(&lib, b"mpv_render_context_render\0")?,
             _lib: lib,
         };
         Ok(Arc::new(api))
@@ -389,6 +460,89 @@ impl MpvApi {
     /// Block until the next mpv event (or timeout). Pointer is owned by libmpv.
     pub unsafe fn wait_event(&self, handle: *mut MpvHandle, timeout: f64) -> *mut MpvEvent {
         (self.wait_event)(handle, timeout)
+    }
+
+    /// `mpv_render_context_create` (OpenGL backend). Caller frees with
+    /// `render_context_free` **before** `terminate_destroy`.
+    pub unsafe fn render_context_create(
+        &self,
+        handle: *mut MpvHandle,
+        init: &MpvOpenGLInitParams,
+    ) -> Result<*mut MpvRenderContext, String> {
+        let api_type = MPV_RENDER_API_TYPE_OPENGL.as_ptr() as *mut c_void;
+        let mut params = [
+            MpvRenderParam {
+                type_: MPV_RENDER_PARAM_API_TYPE,
+                data: api_type,
+            },
+            MpvRenderParam {
+                type_: MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,
+                data: init as *const MpvOpenGLInitParams as *mut c_void,
+            },
+            MpvRenderParam {
+                type_: MPV_RENDER_PARAM_INVALID,
+                data: ptr::null_mut(),
+            },
+        ];
+        let mut ctx: *mut MpvRenderContext = ptr::null_mut();
+        let code = (self.render_context_create)(&mut ctx, handle, params.as_mut_ptr());
+        if code < 0 || ctx.is_null() {
+            return Err(format!(
+                "mpv_render_context_create: {}",
+                self.error_text(code)
+            ));
+        }
+        Ok(ctx)
+    }
+
+    pub unsafe fn render_context_free(&self, ctx: *mut MpvRenderContext) {
+        if !ctx.is_null() {
+            (self.render_context_free)(ctx);
+        }
+    }
+
+    pub unsafe fn render_context_set_update_callback(
+        &self,
+        ctx: *mut MpvRenderContext,
+        callback: MpvRenderUpdateFn,
+        user: *mut c_void,
+    ) {
+        (self.render_context_set_update_callback)(ctx, callback, user);
+    }
+
+    /// Returns the pending update bitmask (`MPV_RENDER_UPDATE_FRAME`, …).
+    pub unsafe fn render_context_update(&self, ctx: *mut MpvRenderContext) -> u64 {
+        (self.render_context_update)(ctx)
+    }
+
+    /// Draw the current frame into the GL default framebuffer (FBO 0).
+    pub unsafe fn render_context_render(
+        &self,
+        ctx: *mut MpvRenderContext,
+        fbo: &MpvOpenGLFbo,
+        flip_y: bool,
+    ) -> Result<(), String> {
+        let fbo_param = MpvOpenGLFbo { ..*fbo };
+        let mut flip: i32 = if flip_y { 1 } else { 0 };
+        let mut params = [
+            MpvRenderParam {
+                type_: MPV_RENDER_PARAM_OPENGL_FBO,
+                data: &fbo_param as *const MpvOpenGLFbo as *mut c_void,
+            },
+            MpvRenderParam {
+                type_: MPV_RENDER_PARAM_FLIP_Y,
+                data: &mut flip as *mut i32 as *mut c_void,
+            },
+            MpvRenderParam {
+                type_: MPV_RENDER_PARAM_INVALID,
+                data: ptr::null_mut(),
+            },
+        ];
+        let code = (self.render_context_render)(ctx, params.as_mut_ptr());
+        if code < 0 {
+            return Err(format!("mpv_render_context_render: {}", self.error_text(code)));
+        }
+        Ok(())
     }
 
     pub unsafe fn get_property_node(

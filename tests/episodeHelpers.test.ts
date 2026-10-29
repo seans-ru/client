@@ -120,6 +120,18 @@ describe("playability and catalog flattening", () => {
     expect(isSeriesCatalog(catalog)).toBe(true);
     expect(isSeriesCatalog({ kind: "movie" })).toBe(false);
   });
+
+  it("treats a single-file catalog as a film, not a series pack", () => {
+    expect(isSeriesCatalog({ kind: "movie", files: [ep({ id: "m1" })] })).toBe(
+      false,
+    );
+    expect(isSeriesCatalog({ kind: "movie", files: [ep({ id: "m1" }), ep({ id: "m2" })] })).toBe(
+      false,
+    );
+    expect(isSeriesCatalog({ kind: "series", files: [ep({ id: "m1" })] })).toBe(
+      true,
+    );
+  });
 });
 
 describe("mediaEpisodesToCatalog", () => {

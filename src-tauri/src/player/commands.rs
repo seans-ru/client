@@ -130,10 +130,10 @@ pub struct SyncRect {
     pub height: f64,
 }
 
-/// Resize the mpv child window.
+/// Size the offscreen render target to the DOM video area.
 ///
-/// With `rect`: size it to the HTML video area (sidecar / control strip stay
-/// uncovered). Without `rect`: re-apply the last known video rect.
+/// With `rect`: use its physical-pixel size (x/y ignored — the canvas fills
+/// the video area in the DOM). Without `rect`: re-apply the last known size.
 #[tauri::command]
 pub fn player_sync_size(rect: Option<SyncRect>) -> Result<(), String> {
     match rect {
@@ -150,4 +150,11 @@ pub fn player_sync_size(rect: Option<SyncRect>) -> Result<(), String> {
         None => session::sync_host_size(),
     }
     Ok(())
+}
+
+/// Loopback URL of the raw frame stream for the page canvas
+/// (`http://127.0.0.1:<port>/frames`).
+#[tauri::command]
+pub fn player_frames_url() -> Result<String, String> {
+    super::frames::ensure_started()
 }

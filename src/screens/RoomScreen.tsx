@@ -196,6 +196,7 @@ export function RoomScreen({ code }: { code: string }) {
           roomMode
           onTransport={handleTransport}
           transportRef={transportRef}
+          room={{ code, members: room.state.members.length }}
           sidecarExtra={
             <RoomPanel
               code={code}

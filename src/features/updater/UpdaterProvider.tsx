@@ -192,9 +192,12 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Startup + recurring checks, gated on the auth gate being ready (non-blocking).
+  // Dev builds never auto-check: `npm run tauri dev` would otherwise find a
+  // newer release and start downloading it over the working tree.
   useEffect(() => {
     if (status === "loading") return;
     void readAppVersion().then((version) => setAppVersion(version));
+    if (import.meta.env.DEV) return;
 
     if (!startupCheckedRef.current) {
       startupCheckedRef.current = true;

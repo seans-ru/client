@@ -38,12 +38,16 @@ libloading = "0.8"
 # Progressive playback: fetch S3 segments for the local loopback range server.
 ureq = { version = "2", default-features = false, features = ["tls"] }
 # Win32 child window used as the mpv `wid` render target.
+# Registry: discord-{app_id}:// launch registration for the Join button (Discord RPC).
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
     "Win32_Graphics_Gdi",
 ] }
+# Discord Rich Presence (IPC named pipe): Listening activity + joinable rooms.
+discord-presence = "3.2"
 # Main-window HWND for the mpv host (also available via tauri's window handle).
 raw-window-handle = "0.6"
 

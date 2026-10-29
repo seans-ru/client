@@ -144,8 +144,10 @@ export function isSeriesCatalog(
   catalog: PlaybackCatalog | null | undefined,
 ): boolean {
   if (!catalog) return false;
+  if (catalog.kind === "movie") return false;
   if (catalog.kind === "series") return true;
-  return catalogEpisodes(catalog).length > 0;
+  // Unknown kind: a single file is a film, not a pack.
+  return catalogEpisodes(catalog).length > 1;
 }
 
 /** Episode row from `GET /api/media/{id}/episodes`. */

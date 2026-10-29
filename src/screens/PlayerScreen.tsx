@@ -13,6 +13,8 @@ import type { UsePlayerState } from "../features/player";
 import {
   isExternalAudioTrack,
 } from "../features/player/audioTrackHelpers";
+import { useDiscordRpc } from "../features/discord";
+import type { DiscordRoomInfo } from "../features/discord";
 import {
   playerSetMaxSeekable,
   progressiveStart,
@@ -116,6 +118,7 @@ export function PlayerScreen({
   onTransport,
   transportRef,
   sidecarExtra,
+  room,
 }: {
   fileId: string;
   startAt?: number | null;
@@ -127,6 +130,8 @@ export function PlayerScreen({
   transportRef?: { current: RoomTransport | null };
   /** Extra sidecar content (room members / actions). */
   sidecarExtra?: ReactNode;
+  /** Discord RPC: room party (code + member count) for the Join button. */
+  room?: DiscordRoomInfo | null;
 }) {
   const player = usePlayer();
   const [openToken, setOpenToken] = useState(0);
@@ -221,6 +226,20 @@ export function PlayerScreen({
     canPlay,
     selectAudio,
   } = playbackState;
+
+  // Discord Rich Presence: Listening activity with progress + poster; in room
+  // mode also a party and the «Присоединиться» button.
+  useDiscordRpc({
+    mediaId,
+    title: playback?.title ?? null,
+    season: playback?.season ?? episodeCtx.season,
+    episode: playback?.episode ?? episodeCtx.episode,
+    positionSec: player.snapshot.position,
+    durationSec: player.snapshot.duration,
+    paused: player.snapshot.pause,
+    active: player.snapshot.file_loaded,
+    room: room ?? null,
+  });
 
   // What the player actually runs as (overrides a stale stream snapshot).
   const effectiveMode = openedMode ?? mode;

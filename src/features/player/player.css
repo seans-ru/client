@@ -35,6 +35,16 @@
   cursor: pointer;
 }
 
+/* Frame-stream surface: mpv pixels arrive here; chrome overlays in DOM. */
+.player-video-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #000;
+}
+
 .player-video-area-status {
   cursor: default;
   display: flex;
@@ -44,6 +54,8 @@
 }
 
 .player-surface-status {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -128,6 +140,11 @@
   filter: brightness(1.08);
 }
 
+.player-icon-btn-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .player-time {
   font-variant-numeric: tabular-nums;
   font-size: var(--text-sm);
@@ -195,6 +212,44 @@
   background: var(--accent);
 }
 
+/* --------------------------------------------------------- overlay layer */
+
+/**
+ * Floating popups / toasts sit at the bottom of the video area, in DOM over
+ * the frame canvas — z-index works normally now, nothing occludes them.
+ */
+.player-overlay-layer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  /* Horizontal only: an empty layer must measure 0 px so the mpv rect is
+     never shrunk by dead band. */
+  padding: 0 var(--space-4);
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.player-overlay-layer > * {
+  pointer-events: auto;
+  margin-top: var(--space-2);
+}
+
+.player-overlay-layer > *:last-child {
+  margin-bottom: var(--space-2);
+}
+
+/* No popups → no reserved band; the video rect fills the area. */
+.player-overlay-layer:empty {
+  display: none;
+}
+
 /* --------------------------------------------------------- settings menu */
 
 .player-menu {
@@ -203,11 +258,9 @@
 }
 
 .player-menu-panel {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
+  align-self: flex-end;
   width: 240px;
-  max-height: 320px;
+  max-height: min(320px, 40vh);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -335,6 +388,22 @@
   font-variant-numeric: tabular-nums;
 }
 
+.player-sidecar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.player-sidecar-title {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+
 /* Episode list (sidecar) */
 
 .episode-picker {
@@ -397,10 +466,7 @@
 /* --------------------------------------------------- progressive status */
 
 .player-buffer-wait {
-  position: absolute;
-  left: 50%;
-  bottom: 88px;
-  transform: translateX(-50%);
+  align-self: center;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -431,11 +497,8 @@
 }
 
 .player-toast {
-  position: absolute;
-  left: 50%;
-  bottom: 88px;
-  transform: translateX(-50%);
-  max-width: min(420px, calc(100% - var(--space-8)));
+  align-self: center;
+  max-width: min(420px, 100%);
   padding: 8px 12px;
   background: var(--bg-elevated);
   color: var(--ink);
@@ -488,11 +551,9 @@
 }
 
 .player-skip-row {
-  position: absolute;
-  right: var(--space-4);
-  bottom: 88px;
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: var(--space-2);
   z-index: 5;
 }
@@ -509,13 +570,11 @@
   background: var(--bg-hover);
 }
 
-/* Credits rating popup — overlay over the video area, does not pause playback */
+/* Credits rating popup — bottom-of-video overlay; does not pause playback */
 
 .credits-popup {
-  position: absolute;
-  right: var(--space-4);
-  bottom: 88px;
-  width: min(320px, calc(100% - var(--space-8)));
+  align-self: flex-end;
+  width: min(320px, 100%);
   padding: var(--space-3);
   background: var(--bg-elevated);
   color: var(--ink);

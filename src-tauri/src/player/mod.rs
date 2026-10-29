@@ -1,16 +1,19 @@
-//! In-process libmpv player (M7).
+//! In-process libmpv player (M7 / frame-stream).
 //!
 //! - DLLs are **bundled resources** (`src-tauri/resources/mpv/` → `mpv/` next
 //!   to `seans.exe` via `bundle.resources`). Populated at build time by
 //!   `scripts/fetch-mpv.ps1`. Never downloaded at runtime (AV policy).
-//! - Rendering uses the mpv `wid` option into a Win32 child window owned by
-//!   the main Tauri window (see `host.rs` for the rationale vs render API).
+//! - Rendering: `vo=libmpv` into an offscreen GL target (`gl.rs`), frames are
+//!   streamed to the page canvas (`frames.rs`) so HTML chrome can overlay the
+//!   video without Win32/WebView2 z-order conflicts.
 //! - HW decode: `hwdec=auto-safe` (d3d11va / dxva2 / nvdec with soft fallback).
 //! - Errors are surfaced to JS as Russian strings («Не удалось открыть файл»,
 //!   missing DLL → rebuild hint). No infinite spinner.
 
 pub mod commands;
 pub mod ffi;
+pub mod frames;
+pub mod gl;
 pub mod host;
 pub mod session;
 

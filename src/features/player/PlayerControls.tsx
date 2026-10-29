@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
 import { SeekMarkers } from "../theintrodb/SegmentChrome";
 import type { SegmentMarker } from "../theintrodb/types";
@@ -60,6 +61,12 @@ export type PlayerControlsProps = {
   selectedAudioId?: string | null;
   /** Playback-level audio change (persists preference). */
   onSelectPlaybackAudio?: (trackId: string | number) => void;
+  /** Overlay layer node — the settings panel must render there (mpv HWND). */
+  settingsOverlayEl?: HTMLElement | null;
+  /** Sidecar rail toggle (hidden when the rail has no content). */
+  sidecarAvailable?: boolean;
+  sidecarOpen?: boolean;
+  onToggleSidecar?: () => void;
 };
 
 function useDragSeek(
@@ -227,6 +234,25 @@ function FullscreenIcon({ active }: { active: boolean }) {
   );
 }
 
+/** Sidecar rail toggle: rectangle with a right-hand panel column. */
+export function PanelIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <rect
+        x="2.5"
+        y="3"
+        width="13"
+        height="12"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        fill="none"
+      />
+      <path d="M11.5 3v12" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
 /* ---------------------------------------------------------- settings menu */
 
 function SettingsMenu({
@@ -243,6 +269,7 @@ function SettingsMenu({
   onSelectPlaybackAudio,
   chapters,
   onSeekChapter,
+  overlayEl,
 }: {
   snapshot: PlayerSnapshot;
   onSetSpeed: (speed: number) => void;
@@ -257,14 +284,22 @@ function SettingsMenu({
   onSelectPlaybackAudio?: (trackId: string | number) => void;
   chapters?: SegmentMarker[];
   onSeekChapter?: (seconds: number) => void;
+  /** Overlay layer node: the panel must live there to stay visible (mpv HWND). */
+  overlayEl?: HTMLElement | null;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
     const onDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      // The panel is portaled into the overlay layer — outside of rootRef.
+      if (rootRef.current?.contains(target) || panelRef.current?.contains(target)) {
+        return;
+      }
+      setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
@@ -280,20 +315,13 @@ function SettingsMenu({
   const productAudio = audioOptions && audioOptions.length > 0;
   const productSelected = selectedAudioId ?? String(audioOptions?.[0]?.track.id ?? "");
 
-  return (
-    <div className="player-menu" ref={rootRef}>
-      <button
-        type="button"
-        className="player-icon-btn"
-        aria-label="Настройки воспроизведения"
-        aria-expanded={open}
-        title="Настройки"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <GearIcon />
-      </button>
-      {open ? (
-        <div className="player-menu-panel" role="menu">
+  const panel = (
+    <div
+      className="player-menu-panel"
+      role="menu"
+      ref={panelRef}
+      onClick={(event) => event.stopPropagation()}
+    >
           <section>
             <h4 className="player-menu-title">Скорость</h4>
             <div className="player-menu-row">
@@ -400,8 +428,22 @@ function SettingsMenu({
               </div>
             </section>
           ) : null}
-        </div>
-      ) : null}
+    </div>
+  );
+
+  return (
+    <div className="player-menu" ref={rootRef}>
+      <button
+        type="button"
+        className="player-icon-btn"
+        aria-label="Настройки воспроизведения"
+        aria-expanded={open}
+        title="Настройки"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <GearIcon />
+      </button>
+      {open && overlayEl ? createPortal(panel, overlayEl) : null}
     </div>
   );
 }
@@ -428,6 +470,10 @@ export function PlayerControls({
   audioOptions,
   selectedAudioId,
   onSelectPlaybackAudio,
+  settingsOverlayEl,
+  sidecarAvailable = false,
+  sidecarOpen = true,
+  onToggleSidecar,
 }: PlayerControlsProps) {
   const duration = snapshot.duration;
   const percent = snapshot.file_loaded
@@ -553,7 +599,21 @@ export function PlayerControls({
           onSelectPlaybackAudio={onSelectPlaybackAudio}
           chapters={chapters}
           onSeekChapter={onSeekChapter}
+          overlayEl={settingsOverlayEl}
         />
+
+        {sidecarAvailable && onToggleSidecar ? (
+          <button
+            type="button"
+            className={`player-icon-btn${sidecarOpen ? " player-icon-btn-active" : ""}`}
+            onClick={onToggleSidecar}
+            aria-label={sidecarOpen ? "Скрыть боковую панель" : "Показать боковую панель"}
+            aria-pressed={sidecarOpen}
+            title={sidecarOpen ? "Скрыть панель" : "Показать панель"}
+          >
+            <PanelIcon />
+          </button>
+        ) : null}
 
         <button
           type="button"

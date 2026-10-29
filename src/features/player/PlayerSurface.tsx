@@ -8,7 +8,7 @@
  * chrome (transport, keyboard, sidecar, progressive toasts).
  */
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Button, ErrorState, Spinner } from "../../design/primitives";
 import { CreditsPopup } from "../theintrodb/CreditsPopup";
@@ -17,7 +17,9 @@ import { EMPTY_BUNDLE } from "../theintrodb/types";
 import type { TheIntroDbBundle } from "../theintrodb/types";
 import { useSegmentChrome } from "../theintrodb/useSegmentChrome";
 import { EpisodePicker } from "./EpisodePicker";
-import { PlayerControls } from "./PlayerControls";
+import { PanelIcon, PlayerControls } from "./PlayerControls";
+import { CanvasVideoRenderer, FrameStream } from "./frameSink";
+import { playerFramesUrl } from "./playerApi";
 import { ProgressiveStatus } from "./ProgressiveStatus";
 import {
   applySeekDelta,
@@ -36,6 +38,9 @@ import type { PlaybackAudioOption } from "./usePlayback";
 import type { UsePlayerState } from "./usePlayer";
 import type { PlaybackEpisode } from "../../api/playback";
 import type { PlaybackSeasonGroup } from "../../api/playback";
+
+/** localStorage key: sidecar rail visibility (`"0"` = collapsed). */
+const SIDECAR_PREF_KEY = "seans.player.sidecar";
 
 export type PlayerSurfaceProps = {
   player: UsePlayerState;
@@ -88,29 +93,77 @@ export function PlayerSurface({
   const { phase, snapshot, error, waitMessage, retry } = player;
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const videoAreaRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  /** DOM node of the overlay layer — portal target for the settings panel. */
+  const [overlayEl, setOverlayEl] = useState<HTMLElement | null>(null);
   const fullscreen = snapshot.fullscreen;
 
-  const hasEpisodes = Boolean(seasonGroups && seasonGroups.length > 0 && onSelectEpisode);
-  const showSidecar = hasEpisodes || Boolean(sidecarExtra);
+  // The picker is a switcher: one playable item (a film) has nothing to
+  // choose — keep the rail empty instead of listing the file itself.
+  const episodeCount = (seasonGroups ?? []).reduce(
+    (count, group) => count + (group.episodes?.length ?? 0),
+    0,
+  );
+  const hasEpisodes = episodeCount > 1 && Boolean(onSelectEpisode);
+  const sidecarAvailable = hasEpisodes || Boolean(sidecarExtra);
+  const [sidecarOpen, setSidecarOpen] = useState(() => {
+    try {
+      return localStorage.getItem(SIDECAR_PREF_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleSidecar = useCallback(() => {
+    setSidecarOpen((open) => {
+      const next = !open;
+      try {
+        localStorage.setItem(SIDECAR_PREF_KEY, next ? "1" : "0");
+      } catch {
+        // storage may be unavailable — the toggle still works for this session
+      }
+      return next;
+    });
+  }, []);
+  const showSidecar = sidecarAvailable && sidecarOpen;
 
-  // Keep the mpv child window exactly on the DOM video area (physical px).
-  // This is what leaves the transport strip and sidecar uncovered.
-  // While a status screen is up the host is collapsed — it sits above the
-  // webview and would otherwise paint over the waiting/error message.
+  // Paint the offscreen mpv frames into the canvas (frame-stream player).
+  // The canvas is plain DOM — popups overlay it with normal z-index.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const renderer = new CanvasVideoRenderer(canvas);
+    const stream = new FrameStream();
+    let cancelled = false;
+    void (async () => {
+      try {
+        const url = await playerFramesUrl();
+        if (cancelled) return;
+        await stream.connect(url, (frame) => {
+          renderer.push(frame.width, frame.height, frame.pixels);
+        });
+      } catch (error) {
+        if (!cancelled) console.warn("[player] frame stream:", error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      stream.close();
+      renderer.destroy();
+    };
+  }, []);
+
+  // Size the offscreen render target to the DOM video area (physical px).
+  // The canvas fills the same box, so frames map 1:1 onto it.
   useEffect(() => {
     const el = videoAreaRef.current;
     if (!el) return;
     const sync = () => {
-      if (phase !== "ready") {
-        void player.syncSize({ x: 0, y: 0, width: 1, height: 1 });
-        return;
-      }
       const rect = el.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1) return;
       const dpr = window.devicePixelRatio || 1;
       void player.syncSize({
-        x: rect.left * dpr,
-        y: rect.top * dpr,
+        x: 0,
+        y: 0,
         width: rect.width * dpr,
         height: rect.height * dpr,
       });
@@ -126,7 +179,7 @@ export function PlayerSurface({
       observer.disconnect();
       window.removeEventListener("resize", sync);
     };
-  }, [player.syncSize, phase, fullscreen, showSidecar]);
+  }, [player.syncSize, fullscreen, showSidecar]);
 
   const togglePause = useCallback(() => {
     void player.togglePause();
@@ -282,78 +335,106 @@ export function PlayerSurface({
           onClick={statusNode ? undefined : togglePause}
           title={statusNode ? undefined : "Пробел — пауза"}
         >
+          {/* Offscreen mpv frames land here; everything else is DOM above it. */}
+          <canvas ref={canvasRef} className="player-video-canvas" aria-hidden="true" />
           {statusNode}
+          {/* Popups live at the bottom of the video area — plain DOM over the
+              canvas, no host window to occlude them. Clicks here must not
+              toggle pause. */}
+          <div
+            className="player-overlay-layer"
+            ref={setOverlayEl}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {statusNode ? null : (
+              <>
+                <ProgressiveStatus
+                  mode={mode}
+                  progress={progress ?? { percentDownloaded: 0, percentSeekable: 0 }}
+                  limit={limit ?? { maxSeekableSec: null, seekableRatio: null, durationSec: null }}
+                  waitingAtEdge={waitingAtEdge}
+                  blockedToastToken={blockedToastToken}
+                />
+
+                <SkipButtons
+                  skips={chrome.skips}
+                  visible={chrome.skipVisible}
+                  onSkip={seekMsPersonal}
+                />
+
+                {chrome.creditsPopupOpen && mediaId != null ? (
+                  <CreditsPopup
+                    mediaId={mediaId}
+                    onSubmitted={chrome.onCreditsSubmitted}
+                    onDismiss={chrome.onDismissCredits}
+                  />
+                ) : null}
+              </>
+            )}
+          </div>
         </div>
 
         {statusNode ? null : (
-          <>
-            {chrome.creditsPopupOpen && mediaId != null ? (
-              <CreditsPopup
-                mediaId={mediaId}
-                onSubmitted={chrome.onCreditsSubmitted}
-                onDismiss={chrome.onDismissCredits}
-              />
-            ) : null}
-
-            <SkipButtons
-              skips={chrome.skips}
-              visible={chrome.skipVisible}
-              onSkip={seekMsPersonal}
-            />
-
-            <PlayerControls
-              snapshot={snapshot}
-              onSeek={seekTo}
-              onTogglePause={togglePause}
-              onSetSpeed={(speed) => {
-                void player.setSpeed(clampSpeed(speed));
-              }}
-              onSetVolume={(volume) => {
-                void player.setVolume(volume);
-              }}
-              onToggleMute={() => {
-                void player.setMute(!snapshot.mute);
-              }}
-              onSetAudioTrack={(id) => {
-                void player.setAudioTrack(id);
-                void player.refreshTracks();
-              }}
-              onSetSubtitleTrack={(id) => {
-                void player.setSubtitleTrack(id);
-                void player.refreshTracks();
-              }}
-              onToggleFullscreen={() => {
-                void player.setFullscreen(!snapshot.fullscreen);
-              }}
-              markers={chrome.markers}
-              chapters={chrome.markers}
-              onSeekChapter={seekTo}
-              mode={mode}
-              progress={progress}
-              limit={limit}
-              onBlockedSeek={onBlockedSeek}
-              audioOptions={audioOptions}
-              selectedAudioId={selectedAudioId}
-              onSelectPlaybackAudio={(trackId) => {
-                onSelectAudio?.(trackId);
-              }}
-            />
-          </>
-        )}
-
-        {statusNode ? null : (
-          <ProgressiveStatus
+          <PlayerControls
+            snapshot={snapshot}
+            onSeek={seekTo}
+            onTogglePause={togglePause}
+            onSetSpeed={(speed) => {
+              void player.setSpeed(clampSpeed(speed));
+            }}
+            onSetVolume={(volume) => {
+              void player.setVolume(volume);
+            }}
+            onToggleMute={() => {
+              void player.setMute(!snapshot.mute);
+            }}
+            onSetAudioTrack={(id) => {
+              void player.setAudioTrack(id);
+              void player.refreshTracks();
+            }}
+            onSetSubtitleTrack={(id) => {
+              void player.setSubtitleTrack(id);
+              void player.refreshTracks();
+            }}
+            onToggleFullscreen={() => {
+              void player.setFullscreen(!snapshot.fullscreen);
+            }}
+            markers={chrome.markers}
+            chapters={chrome.markers}
+            onSeekChapter={seekTo}
             mode={mode}
-            progress={progress ?? { percentDownloaded: 0, percentSeekable: 0 }}
-            limit={limit ?? { maxSeekableSec: null, seekableRatio: null, durationSec: null }}
-            waitingAtEdge={waitingAtEdge}
-            blockedToastToken={blockedToastToken}
+            progress={progress}
+            limit={limit}
+            onBlockedSeek={onBlockedSeek}
+            audioOptions={audioOptions}
+            selectedAudioId={selectedAudioId}
+            onSelectPlaybackAudio={(trackId) => {
+              onSelectAudio?.(trackId);
+            }}
+            settingsOverlayEl={overlayEl}
+            sidecarAvailable={sidecarAvailable}
+            sidecarOpen={sidecarOpen}
+            onToggleSidecar={toggleSidecar}
           />
         )}
       </div>
 
       {showSidecar ? (
         <aside className="player-sidecar" aria-label="Серии и участники">
+          <div className="player-sidecar-header">
+            <h3 className="player-sidecar-title">
+              {hasEpisodes ? "Серии" : "Панель"}
+            </h3>
+            <button
+              type="button"
+              className="player-icon-btn"
+              onClick={toggleSidecar}
+              aria-label="Скрыть боковую панель"
+              title="Скрыть панель"
+            >
+              <PanelIcon />
+            </button>
+          </div>
           {hasEpisodes ? (
             <EpisodePicker
               groups={seasonGroups!}

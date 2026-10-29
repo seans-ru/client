@@ -1,10 +1,13 @@
-//! Win32 child window used as the mpv `wid` render target (M7).
+//! Hidden Win32 window anchoring the offscreen GL context (`vo=libmpv`).
 //!
-//! Custom window class (`SeansMpvHost`) with `CS_OWNDC` + black brush so
-//! `vo=direct3d` can own the DC and present frames. Parented to the Tauri
-//! top-level window, placed `HWND_TOP` above WebView2 (WebView2 D3D occludes
-//! sibling children even when its page background is transparent). The bottom
-//! `CONTROL_STRIP_PX` stays free for the HTML control bar.
+//! The window is **never shown**: with the frame stream architecture mpv
+//! renders into an offscreen OpenGL target and pixels are shipped to the page
+//! canvas, so there is no on-screen HWND to fight WebView2 z-order with.
+//! The client size of this window is the GL default framebuffer size, i.e.
+//! the frame resolution — `set_video_rect` sizes it; x/y are ignored.
+//!
+//! Custom window class (`SeansMpvHost`) with `CS_OWNDC` so the DC can hold a
+//! pixel format for the WGL context (see `gl.rs`).
 
 #![cfg(windows)]
 
@@ -15,9 +18,8 @@ use windows_sys::Win32::Graphics::Gdi::{GetStockObject, BLACK_BRUSH};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetAncestor, GetClientRect, MoveWindow,
-    RegisterClassExW, SendMessageW, SetWindowPos, ShowWindow, CS_OWNDC, GA_ROOT, HWND_TOP,
-    SW_SHOW, WINDOW_EX_STYLE, WM_SIZE, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
-    WS_EX_TRANSPARENT, WS_VISIBLE,
+    RegisterClassExW, SendMessageW, CS_OWNDC, GA_ROOT, WINDOW_EX_STYLE, WM_SIZE, WNDCLASSEXW,
+    WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_TRANSPARENT,
 };
 
 /// Height reserved for the HTML control bar when no DOM video rect has been
@@ -115,7 +117,8 @@ impl HostWindow {
                 WS_EX_TRANSPARENT as WINDOW_EX_STYLE,
                 class_name.as_ptr(),
                 window_name.as_ptr(),
-                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+                // Never WS_VISIBLE: the window is a GL anchor only.
+                WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
                 0,
                 0,
                 w,
@@ -131,13 +134,6 @@ impl HostWindow {
             return Err("player host: CreateWindowExW failed".to_string());
         }
 
-        // HWND_TOP: above WebView2. WS_EX_TRANSPARENT: click-through to HTML
-        // (skip / controls that sit over the video rect).
-        unsafe {
-            SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, 0x0013 /* NOSIZE|NOMOVE|NOACTIVATE */);
-            ShowWindow(hwnd, SW_SHOW);
-        }
-
         let host = HostWindow {
             hwnd,
             parent,
@@ -149,6 +145,11 @@ impl HostWindow {
 
     pub fn hwnd(&self) -> isize {
         self.hwnd as isize
+    }
+
+    /// Current client size (= GL default framebuffer size).
+    pub fn client_size(&self) -> (i32, i32) {
+        client_size(self.hwnd)
     }
 
     /// Re-apply the DOM video rect when one is known; otherwise fall back to

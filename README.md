@@ -128,6 +128,33 @@ The app registers the `seans://` scheme (`HKCU\Software\Classes\seans`) and runs
 
 A second launch forwards the URL to the first process via `tauri-plugin-single-instance`.
 
+## Discord RPC
+
+Watching shows up in Discord as a **Listening** activity: media title, episode
+(`S01E03 · 22 мин из 42 мин`), a live progress bar and the poster. Inside a
+watch-party room the activity also carries a party (`N из 10`, capped per
+subscription plan) and a **Присоединиться** button — the friend's Seans starts
+and lands in the same room.
+
+| | |
+|---|---|
+| Application ID | `1565313293747494932` (`src-tauri/src/discord.rs` `DISCORD_APP_ID`) |
+| Activity type | `Listening` (one line in `build_activity` to switch to `Watching`) |
+| Join secret | `base64url("{user_id}:{room_code}:{nonce}")` |
+| Warm join | Discord IPC `ACTIVITY_JOIN` → `#/room/{code}` |
+| Cold join | Discord launches `discord-{APP_ID}://…` (registered HKCU protocol) → same pipeline |
+
+Setup in the [Discord Developer Portal](https://discord.com/developers/applications):
+set the application name to **Seans** (it renders as «Listening to Seans») and,
+optionally, upload a Rich Presence art asset named `seans` (static fallback
+when a title has no poster). The whole integration is best-effort — Discord
+not running never affects playback.
+
+Posters need **no registration**: the poster URL goes into `large_image` as-is
+and Discord's client proxies image URLs sent over RPC automatically (see the
+presence docs — `external-assets` is only needed for gateway/headless
+presence, not for local RPC). No Discord login or backend support is involved.
+
 ## Project layout
 
 ```

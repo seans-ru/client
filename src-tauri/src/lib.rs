@@ -1,4 +1,5 @@
 mod commands;
+mod discord;
 mod player;
 mod progressive;
 
@@ -21,6 +22,15 @@ fn urls_from_argv(argv: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Forward Discord join payloads (`discord-{APP_ID}://…`) from a second launch.
+fn emit_join_payloads(app: &tauri::AppHandle, argv: &[String]) {
+    for arg in argv {
+        if let Some(secret) = discord::join_secret_candidate(arg) {
+            discord::dispatch_join(app, secret);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -31,6 +41,7 @@ pub fn run() {
                 // Same event name the deep-link plugin uses; JS `onOpenUrl` consumes it.
                 let _ = app.emit("deep-link://new-url", urls);
             }
+            emit_join_payloads(app, &argv);
             focus_main_window(app);
         }))
         .plugin(tauri_plugin_deep_link::init())
@@ -44,6 +55,8 @@ pub fn run() {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 app.deep_link().register_all()?;
             }
+            // Discord RPC: worker thread + discord-{APP_ID}:// join launcher.
+            discord::init(app.handle());
             // Keep the mpv `wid` child window sized to the main window client area.
             if let Some(window) = app.get_webview_window("main") {
                 window.on_window_event(|event| {
@@ -61,6 +74,9 @@ pub fn run() {
             commands::open_url,
             commands::start_loopback_auth,
             commands::stop_loopback_auth,
+            discord::discord_set_activity,
+            discord::discord_clear_activity,
+            discord::discord_take_pending_join,
             player::player_open,
             player::player_play,
             player::player_pause,
@@ -77,6 +93,7 @@ pub fn run() {
             player::player_get_state,
             player::player_destroy,
             player::player_sync_size,
+            player::player_frames_url,
             player::player_set_max_seekable,
             progressive::commands::progressive_start,
             progressive::commands::progressive_update,

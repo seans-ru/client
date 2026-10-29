@@ -10,8 +10,9 @@
 //! - The event loop shares `Arc<Mutex<PlayerSnapshot>>` and does not touch
 //!   `SESSION`.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -25,6 +26,8 @@ use super::ffi::{
     MPV_FORMAT_FLAG, MPV_FORMAT_NODE_ARRAY, MPV_FORMAT_NODE_MAP, MPV_FORMAT_STRING,
     OPEN_FAILED_ERROR,
 };
+use super::frames;
+use super::gl;
 use super::host::{self, HostWindow};
 
 /// Tauri event name carrying a full `PlayerSnapshot`.
@@ -112,6 +115,186 @@ struct SessionInner {
     stop: Arc<AtomicBool>,
     snapshot: SharedSnapshot,
     event_thread: Option<JoinHandle<()>>,
+    /// Offscreen render loop (`vo=libmpv` → GL FBO → frame stream).
+    render_stop: Arc<AtomicBool>,
+    render_thread: Option<JoinHandle<()>>,
+    render_size: Arc<RenderSize>,
+}
+
+/// Desired frame size in physical pixels (JS `player_sync_size` → render target).
+struct RenderSize {
+    width: AtomicI32,
+    height: AtomicI32,
+}
+
+impl RenderSize {
+    fn new(width: i32, height: i32) -> Arc<RenderSize> {
+        Arc::new(RenderSize {
+            width: AtomicI32::new(width.max(2)),
+            height: AtomicI32::new(height.max(2)),
+        })
+    }
+
+    fn set(&self, width: i32, height: i32) {
+        self.width.store(width.max(2), Ordering::SeqCst);
+        self.height.store(height.max(2), Ordering::SeqCst);
+    }
+
+    fn get(&self) -> (i32, i32) {
+        (
+            self.width.load(Ordering::SeqCst),
+            self.height.load(Ordering::SeqCst),
+        )
+    }
+}
+
+/// Wake-up signal for the render loop (mpv `update_callback` → render now).
+struct RenderSignal {
+    flag: Mutex<bool>,
+    cv: Condvar,
+}
+
+impl RenderSignal {
+    fn notify(&self) {
+        if let Ok(mut flag) = self.flag.lock() {
+            *flag = true;
+        }
+        self.cv.notify_all();
+    }
+
+    fn wait(&self, stop: &AtomicBool) {
+        let mut flag = self.flag.lock().unwrap_or_else(|e| e.into_inner());
+        while !*flag && !stop.load(Ordering::SeqCst) {
+            let (guard, _) = self
+                .cv
+                .wait_timeout(flag, Duration::from_millis(100))
+                .unwrap_or_else(|e| e.into_inner());
+            flag = guard;
+        }
+        *flag = false;
+    }
+}
+
+unsafe extern "C" fn on_render_update(user: *mut c_void) {
+    if user.is_null() {
+        return;
+    }
+    let signal = &*(user as *const RenderSignal);
+    signal.notify();
+}
+
+/// Owns the GL surface + mpv render context on its thread. Draws each new
+/// video frame into the hidden host window's default framebuffer, reads the
+/// pixels back and publishes them to the frame stream hub.
+fn render_loop(
+    api: Arc<MpvApi>,
+    handle: SendHandle,
+    hwnd: isize,
+    size: Arc<RenderSize>,
+    hub: Arc<frames::FrameHub>,
+    stop: Arc<AtomicBool>,
+) {
+    let (w, h) = size.get();
+    let mut gl = match gl::GlSurface::attach(hwnd, w, h) {
+        Ok(surface) => surface,
+        Err(e) => {
+            eprintln!("[player] GL attach failed: {e}");
+            return;
+        }
+    };
+    let handle = handle.0;
+
+    let (get_proc_address, get_proc_address_ctx) = gl.proc_address_fn();
+    let init = ffi::MpvOpenGLInitParams {
+        get_proc_address: Some(get_proc_address),
+        get_proc_address_ctx,
+    };
+    let rctx = match unsafe { api.render_context_create(handle, &init) } {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            eprintln!("[player] render context failed: {e}");
+            return;
+        }
+    };
+
+    let signal = Box::into_raw(Box::new(RenderSignal {
+        flag: Mutex::new(false),
+        cv: Condvar::new(),
+    }));
+    unsafe {
+        api.render_context_set_update_callback(
+            rctx,
+            Some(on_render_update),
+            signal as *mut c_void,
+        );
+    }
+    println!("[player] render pipeline ready ({}x{})", w, h);
+
+    let mut rendered: u64 = 0;
+    let mut render_errors: u32 = 0;
+    while !stop.load(Ordering::SeqCst) {
+        unsafe { (*signal).wait(&stop) };
+        if stop.load(Ordering::SeqCst) {
+            break;
+        }
+        let (w, h) = size.get();
+        if let Err(e) = gl.resize(w, h) {
+            eprintln!("[player] GL resize: {e}");
+        }
+        let (fw, fh) = gl.size();
+        // Render into OUR texture-backed FBO (not the hidden window surface —
+        // that path produced all-zero readbacks).
+        let fbo = ffi::MpvOpenGLFbo {
+            fbo: gl.fbo_id(),
+            w: fw,
+            h: fh,
+            internal_format: gl.internal_format(),
+        };
+        unsafe {
+            api.render_context_update(rctx);
+        }
+        match unsafe { api.render_context_render(rctx, &fbo, false) } {
+            Ok(()) => {
+                let pixels = gl.read_pixels();
+                let pts = unsafe { api.get_property_f64(handle, "time-pos") }.unwrap_or(0.0);
+                hub.publish(frames::FramePacket {
+                    width: fw as u32,
+                    height: fh as u32,
+                    pts,
+                    pixels,
+                });
+                rendered += 1;
+                // Periodic breadcrumb: proves frames flow and shows whether
+                // the picture is actually non-black (mid-frame pixel).
+                if rendered == 1 || rendered % 120 == 0 {
+                    let packet = hub.peek().map(|(_, p)| p);
+                    if let Some(p) = packet {
+                        let mid = (((p.height / 2) as usize) * (p.width as usize)
+                            + (p.width / 2) as usize)
+                            * 4;
+                        let px = p.pixels.get(mid..mid + 4).unwrap_or(&[0, 0, 0, 0]);
+                        println!(
+                            "[player] frames={} size={}x{} pts={:.2} mid_px=RGBA{}/{}/{}/{}",
+                            rendered, p.width, p.height, p.pts, px[0], px[1], px[2], px[3]
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                render_errors += 1;
+                if render_errors <= 3 {
+                    eprintln!("[player] render error: {e}");
+                }
+            }
+        }
+    }
+    println!("[player] render loop exit (frames={rendered})");
+
+    unsafe {
+        api.render_context_set_update_callback(rctx, None, std::ptr::null_mut());
+        api.render_context_free(rctx);
+        drop(Box::from_raw(signal));
+    }
 }
 
 // `MpvHandle` is only used under the session mutex / event thread protocol.
@@ -302,31 +485,13 @@ pub fn open(
     let handle = unsafe { api.create()? };
 
     // Options must be set before initialize.
-    // wid: embed rendering into the child window created above.
-    let hwnd = host.hwnd();
-    if let Err(e) = unsafe { api.set_option_i64(handle, "wid", hwnd as i64) } {
-        // Some mpv builds accept wid only as a decimal string.
-        let as_text = hwnd.to_string();
-        if unsafe { api.set_option_string(handle, "wid", &as_text) }.is_err() {
-            unsafe { api.terminate_destroy(handle) };
-            return Err(e);
-        }
+    // vo=libmpv: render API into an offscreen GL target (see `gl.rs` +
+    // `frames.rs`) — the page canvas receives the pixels, so HTML chrome can
+    // freely overlay the video (no HWND z-order fights with WebView2).
+    if let Err(e) = unsafe { api.set_option_string(handle, "vo", "libmpv") } {
+        unsafe { api.terminate_destroy(handle) };
+        return Err(e);
     }
-
-    // Prefer `gpu` (d3d11) — modern shinchiro builds ship gpu, not always direct3d.
-    // Never list `libmpv` here: that VO ignores `wid` and paints nothing.
-    let mut vo_ok = false;
-    for vo in ["gpu", "direct3d", "gpu-next"] {
-        if unsafe { api.set_option_string(handle, "vo", vo) }.is_ok() {
-            vo_ok = true;
-            break;
-        }
-    }
-    if !vo_ok {
-        let _ = unsafe { api.set_option_string(handle, "vo", "gpu") };
-    }
-    let _ = unsafe { api.set_option_string(handle, "gpu-api", "d3d11") };
-    let _ = unsafe { api.set_option_string(handle, "gpu-context", "d3d11") };
 
     // HW decode with automatic software fallback (hwdec=auto-safe).
     if let Err(e) = unsafe { api.set_option_string(handle, "hwdec", "auto-safe") } {
@@ -359,7 +524,8 @@ pub fn open(
         return Err(e);
     }
 
-    // Re-fit + WM_SIZE after initialize so the vo allocates a full-size surface.
+    // Size the hidden GL anchor window to the default render target; the
+    // frontend overrides this via `player_sync_size` with the canvas size.
     host.fit_parent();
     unsafe { observe_core(&api, handle) };
 
@@ -399,6 +565,23 @@ pub fn open(
         event_loop(thread_api, thread_handle, thread_app, thread_stop, thread_snap);
     });
 
+    // Offscreen render loop: mpv → GL → frame stream (page canvas).
+    let (anchor_w, anchor_h) = host.client_size();
+    let render_size = RenderSize::new(anchor_w, anchor_h);
+    let render_stop = Arc::new(AtomicBool::new(false));
+    let render_thread = {
+        let api = api.clone();
+        let handle = SendHandle(handle);
+        let hwnd = host.hwnd();
+        let size = render_size.clone();
+        let hub = frames::hub();
+        let stop = render_stop.clone();
+        std::thread::spawn(move || {
+            render_loop(api, handle, hwnd, size, hub, stop);
+        })
+    };
+    let _ = frames::ensure_started();
+
     let inner = SessionInner {
         api,
         handle,
@@ -407,6 +590,9 @@ pub fn open(
         stop,
         snapshot: shared,
         event_thread: Some(event_thread),
+        render_stop,
+        render_thread: Some(render_thread),
+        render_size,
     };
 
     // Store only after the thread is running; destroy() joins without holding
@@ -419,7 +605,13 @@ pub fn open(
 
 /// Tear down a session. `inner` must already be removed from `SESSION`.
 fn teardown(mut inner: SessionInner) {
-    // Signal the event loop first, then join *before* destroying the mpv
+    // Stop the render loop first: it owns the GL context and the mpv render
+    // context, which must be freed before the mpv handle is destroyed.
+    inner.render_stop.store(true, Ordering::SeqCst);
+    if let Some(handle) = inner.render_thread.take() {
+        let _ = handle.join();
+    }
+    // Signal the event loop next, then join *before* destroying the mpv
     // handle: the loop may still call get_property until it observes `stop`
     // (wait_event timeout is 0.25s). Destroying first is a use-after-free.
     inner.stop.store(true, Ordering::SeqCst);
@@ -699,13 +891,15 @@ pub fn sync_host_size() {
     }
 }
 
-/// Size the mpv child window to the HTML video area (client-relative
-/// physical pixels). Source of truth is the DOM rect measured in JS — this
-/// is what keeps the sidecar and control strip uncovered.
-pub fn sync_host_rect(x: i32, y: i32, width: i32, height: i32) {
+/// Size the frame stream render target (JS `player_sync_size`, physical px).
+/// The hidden GL anchor window tracks the same size — its client area *is*
+/// the default framebuffer mpv renders into. x/y are ignored (nothing is
+/// positioned on screen anymore).
+pub fn sync_host_rect(_x: i32, _y: i32, width: i32, height: i32) {
     if let Ok(mut guard) = session().inner.lock() {
         if let Some(inner) = guard.as_mut() {
-            inner.host.set_video_rect(x, y, width, height);
+            inner.render_size.set(width, height);
+            inner.host.set_video_rect(0, 0, width, height);
         }
     }
 }
@@ -729,77 +923,81 @@ fn event_loop(
         }
 
         let event = unsafe { api.wait_event(handle, 0.25) };
-        if event.is_null() {
-            // Timeout: flush throttled progress emits.
-            if pending_emit && last_emit.elapsed() >= Duration::from_millis(250) {
-                if let Ok(snap) = snapshot.lock() {
-                    emit_state(&app, &snap);
+        if !event.is_null() {
+            let event_id = unsafe { (*event).event_id };
+            match event_id {
+                MPV_EVENT_SHUTDOWN => break,
+                MPV_EVENT_END_FILE => {
+                    let reason = unsafe {
+                        let data = (*event).data as *const ffi::MpvEventEndFile;
+                        if data.is_null() {
+                            0
+                        } else {
+                            (*data).reason
+                        }
+                    };
+                    if let Ok(mut snap) = snapshot.lock() {
+                        if reason == MPV_END_FILE_REASON_ERROR {
+                            snap.error = Some(OPEN_FAILED_ERROR.to_string());
+                            snap.pause = true;
+                            snap.file_loaded = false;
+                            emit_state(&app, &snap);
+                        } else if reason == 0 {
+                            // EOF
+                            snap.eof = true;
+                            snap.pause = true;
+                            emit_state(&app, &snap);
+                        }
+                    }
                 }
-                last_emit = Instant::now();
-                pending_emit = false;
+                MPV_EVENT_FILE_LOADED
+                | MPV_EVENT_PLAYBACK_RESTART
+                | MPV_EVENT_TRACKS_CHANGED => {
+                    if let Ok(mut snap) = snapshot.lock() {
+                        unsafe {
+                            refresh_snapshot(&api, handle, &mut snap);
+                        }
+                        snap.error = None;
+                        snap.file_loaded =
+                            event_id == MPV_EVENT_FILE_LOADED || snap.file_loaded;
+                        emit_state(&app, &snap);
+                        last_emit = Instant::now();
+                        pending_emit = false;
+                    }
+                }
+                MPV_EVENT_PAUSE | MPV_EVENT_UNPAUSE | MPV_EVENT_IDLE => {
+                    if let Ok(mut snap) = snapshot.lock() {
+                        unsafe {
+                            refresh_snapshot(&api, handle, &mut snap);
+                        }
+                        emit_state(&app, &snap);
+                        last_emit = Instant::now();
+                        pending_emit = false;
+                    }
+                }
+                MPV_EVENT_PROPERTY_CHANGE => {
+                    // time-pos / duration stream in; throttle the JS emit.
+                    if let Ok(mut snap) = snapshot.lock() {
+                        unsafe {
+                            refresh_snapshot(&api, handle, &mut snap);
+                        }
+                        pending_emit = true;
+                    }
+                }
+                _ => {}
             }
-            continue;
         }
 
-        let event_id = unsafe { (*event).event_id };
-        match event_id {
-            MPV_EVENT_SHUTDOWN => break,
-            MPV_EVENT_END_FILE => {
-                let reason = unsafe {
-                    let data = (*event).data as *const ffi::MpvEventEndFile;
-                    if data.is_null() {
-                        0
-                    } else {
-                        (*data).reason
-                    }
-                };
-                if let Ok(mut snap) = snapshot.lock() {
-                    if reason == MPV_END_FILE_REASON_ERROR {
-                        snap.error = Some(OPEN_FAILED_ERROR.to_string());
-                        snap.pause = true;
-                        snap.file_loaded = false;
-                        emit_state(&app, &snap);
-                    } else if reason == 0 {
-                        // EOF
-                        snap.eof = true;
-                        snap.pause = true;
-                        emit_state(&app, &snap);
-                    }
-                }
+        // Flush throttled progress emits. Must run every iteration, not only on
+        // wait_event timeouts: during playback time-pos events stream in
+        // continuously and the timeout branch is never reached — the clock
+        // would freeze except on pause/unpause.
+        if pending_emit && last_emit.elapsed() >= Duration::from_millis(250) {
+            if let Ok(snap) = snapshot.lock() {
+                emit_state(&app, &snap);
             }
-            MPV_EVENT_FILE_LOADED | MPV_EVENT_PLAYBACK_RESTART | MPV_EVENT_TRACKS_CHANGED => {
-                if let Ok(mut snap) = snapshot.lock() {
-                    unsafe {
-                        refresh_snapshot(&api, handle, &mut snap);
-                    }
-                    snap.error = None;
-                    snap.file_loaded =
-                        event_id == MPV_EVENT_FILE_LOADED || snap.file_loaded;
-                    emit_state(&app, &snap);
-                    last_emit = Instant::now();
-                    pending_emit = false;
-                }
-            }
-            MPV_EVENT_PAUSE | MPV_EVENT_UNPAUSE | MPV_EVENT_IDLE => {
-                if let Ok(mut snap) = snapshot.lock() {
-                    unsafe {
-                        refresh_snapshot(&api, handle, &mut snap);
-                    }
-                    emit_state(&app, &snap);
-                    last_emit = Instant::now();
-                    pending_emit = false;
-                }
-            }
-            MPV_EVENT_PROPERTY_CHANGE => {
-                // time-pos / duration stream in; throttle the JS emit.
-                if let Ok(mut snap) = snapshot.lock() {
-                    unsafe {
-                        refresh_snapshot(&api, handle, &mut snap);
-                    }
-                    pending_emit = true;
-                }
-            }
-            _ => {}
+            last_emit = Instant::now();
+            pending_emit = false;
         }
     }
 }
