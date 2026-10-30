@@ -59,12 +59,12 @@ export function SearchPanel() {
         />
       ) : null}
 
-      {status === "idle" && query.trim().length === 0 ? (
+      {/* {status === "idle" && query.trim().length === 0 ? (
         <EmptyState
           title="Найдите фильм или сериал"
           description="Введите название в поле поиска, чтобы увидеть результаты."
         />
-      ) : null}
+      ) : null} */}
 
       {status === "idle" && query.trim().length > 0 ? (
         <EmptyState
