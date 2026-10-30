@@ -22,7 +22,7 @@ Search films (Kinopoisk), pick torrent releases, stream completed files via pres
 
 ```bash
 npm install
-node scripts/generate-icons.mjs   # placeholder icons (once; idempotent)
+node scripts/generate-icons.mjs   # icons from seans-icon.svg (idempotent)
 powershell -ExecutionPolicy Bypass -File scripts\fetch-mpv.ps1   # once: bundle libmpv DLLs
 npm run tauri dev
 ```

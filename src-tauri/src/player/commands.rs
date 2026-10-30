@@ -108,8 +108,9 @@ pub fn player_get_state() -> Result<PlayerSnapshot, String> {
 #[tauri::command]
 pub fn player_destroy() -> Result<(), String> {
     session::destroy();
-    // Progressive source is per-open; drop it with the player.
+    // Progressive source and frame stream are per-open; drop them with the player.
     crate::progressive::stop();
+    super::frames::stop();
     Ok(())
 }
 

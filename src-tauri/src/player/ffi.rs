@@ -29,7 +29,6 @@ pub const MPV_FORMAT_NODE_MAP: c_int = 8;
 
 /* ------------------------------------------------------------------- events */
 
-pub const MPV_EVENT_NONE: c_int = 0;
 pub const MPV_EVENT_SHUTDOWN: c_int = 1;
 pub const MPV_EVENT_END_FILE: c_int = 7;
 pub const MPV_EVENT_FILE_LOADED: c_int = 8;
@@ -41,7 +40,10 @@ pub const MPV_EVENT_PLAYBACK_RESTART: c_int = 21;
 pub const MPV_EVENT_PROPERTY_CHANGE: c_int = 22;
 
 pub const MPV_END_FILE_REASON_EOF: c_int = 0;
+// #TODO: tell user-stop / quit apart from EOF in the end-file handler.
+#[allow(dead_code)]
 pub const MPV_END_FILE_REASON_STOP: c_int = 2;
+#[allow(dead_code)]
 pub const MPV_END_FILE_REASON_QUIT: c_int = 3;
 pub const MPV_END_FILE_REASON_ERROR: c_int = 4;
 
@@ -57,6 +59,8 @@ pub const MPV_RENDER_PARAM_OPENGL_FBO: c_int = 3;
 pub const MPV_RENDER_PARAM_FLIP_Y: c_int = 4;
 
 /// `mpv_render_context_update` bit: a new video frame should be rendered.
+// #TODO: check this bit in the render loop instead of rendering every tick.
+#[allow(dead_code)]
 pub const MPV_RENDER_UPDATE_FRAME: u64 = 1;
 
 #[repr(C)]
@@ -107,6 +111,8 @@ pub struct MpvEvent {
     pub data: *mut c_void,
 }
 
+// #TODO: parse `PROPERTY_CHANGE` payload instead of polling in refresh_snapshot.
+#[allow(dead_code)]
 #[repr(C)]
 pub struct MpvEventProperty {
     pub name: *const c_char,
@@ -151,8 +157,6 @@ type FnTerminateDestroy = unsafe extern "C" fn(*mut MpvHandle);
 type FnErrorString = unsafe extern "C" fn(c_int) -> *const c_char;
 type FnSetOptionString =
     unsafe extern "C" fn(*mut MpvHandle, *const c_char, *const c_char) -> c_int;
-type FnSetOption =
-    unsafe extern "C" fn(*mut MpvHandle, *const c_char, c_int, *mut c_void) -> c_int;
 type FnSetPropertyString =
     unsafe extern "C" fn(*mut MpvHandle, *const c_char, *const c_char) -> c_int;
 type FnSetProperty =
@@ -193,7 +197,6 @@ pub struct MpvApi {
     terminate_destroy: FnTerminateDestroy,
     error_string: FnErrorString,
     set_option_string: FnSetOptionString,
-    set_option: FnSetOption,
     set_property_string: FnSetPropertyString,
     set_property: FnSetProperty,
     get_property: FnGetProperty,
@@ -243,7 +246,6 @@ impl MpvApi {
             terminate_destroy: resolve(&lib, b"mpv_terminate_destroy\0")?,
             error_string: resolve(&lib, b"mpv_error_string\0")?,
             set_option_string: resolve(&lib, b"mpv_set_option_string\0")?,
-            set_option: resolve(&lib, b"mpv_set_option\0")?,
             set_property_string: resolve(&lib, b"mpv_set_property_string\0")?,
             set_property: resolve(&lib, b"mpv_set_property\0")?,
             get_property: resolve(&lib, b"mpv_get_property\0")?,
@@ -306,21 +308,6 @@ impl MpvApi {
         let n = CString::new(name).map_err(|e| e.to_string())?;
         let v = CString::new(value).map_err(|e| e.to_string())?;
         let code = (self.set_option_string)(handle, n.as_ptr(), v.as_ptr());
-        if code < 0 {
-            return Err(format!("set_option {name}: {}", self.error_text(code)));
-        }
-        Ok(())
-    }
-
-    pub unsafe fn set_option_i64(
-        &self,
-        handle: *mut MpvHandle,
-        name: &str,
-        value: i64,
-    ) -> Result<(), String> {
-        let n = CString::new(name).map_err(|e| e.to_string())?;
-        let mut v = value;
-        let code = (self.set_option)(handle, n.as_ptr(), MPV_FORMAT_INT64, &mut v as *mut i64 as *mut c_void);
         if code < 0 {
             return Err(format!("set_option {name}: {}", self.error_text(code)));
         }

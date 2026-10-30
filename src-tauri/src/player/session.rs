@@ -20,7 +20,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::ffi::{
-    self, MpvApi, MpvHandle, MpvNodeList, MPV_END_FILE_REASON_ERROR, MPV_EVENT_END_FILE,
+    self, MpvApi, MpvHandle, MpvNodeList, MPV_END_FILE_REASON_EOF, MPV_END_FILE_REASON_ERROR,
+    MPV_EVENT_END_FILE,
     MPV_EVENT_FILE_LOADED, MPV_EVENT_IDLE, MPV_EVENT_PAUSE, MPV_EVENT_PLAYBACK_RESTART,
     MPV_EVENT_PROPERTY_CHANGE, MPV_EVENT_SHUTDOWN, MPV_EVENT_TRACKS_CHANGED, MPV_EVENT_UNPAUSE,
     MPV_FORMAT_FLAG, MPV_FORMAT_NODE_ARRAY, MPV_FORMAT_NODE_MAP, MPV_FORMAT_STRING,
@@ -942,8 +943,7 @@ fn event_loop(
                             snap.pause = true;
                             snap.file_loaded = false;
                             emit_state(&app, &snap);
-                        } else if reason == 0 {
-                            // EOF
+                        } else if reason == MPV_END_FILE_REASON_EOF {
                             snap.eof = true;
                             snap.pause = true;
                             emit_state(&app, &snap);

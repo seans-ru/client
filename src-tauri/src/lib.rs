@@ -1,3 +1,6 @@
+// MSVC prints an import-library creation banner on every link; not actionable.
+#![allow(linker_messages)]
+
 mod commands;
 mod discord;
 mod player;
