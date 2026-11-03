@@ -1,14 +1,61 @@
 ---
 feature: player-extensibility
-status: in-progress
+status: delivered
 updated: 2026-11-03
 branch: feat/player-extensibility
-commits:
+commits: b1c740f..88d3904
 ---
 
 # Player Extensibility
 
 ## Report
+
+**What was built** — Плеер получил расширяемую архитектуру: типизированный
+реестр `PlayerExtension` (lifecycle setup/dispose, события onOpen/onClose/
+onSnapshot, UI-слоты, именованное хранилище) с изоляцией ошибок; универсальный
+mpv-мост (`player_get_property` / `player_set_property` / `player_command`) с
+deny-list для свойств рендера (`wid`, `vo`, `gpu-context`, `init-options`) и
+закрытым обходом через argv-команды; frame tap (`frameHub`) с stride-сэмплом
+кадров ≤32×32 и троттлингом для видео-эффектов; 5 UI-слотов в хроме плеера
+(controls.primary/secondary, settings.menu, overlay, sidecar).
+
+`PlayerScreen` декомпозирован (≈600 → 244 строки композиции) в хуки
+`useMediaLookup` / `usePlayerOpener` / `useProgressiveGuard` /
+`useGuardedTransport` с сохранением поведения 1-в-1 (копии, пороги, порядок
+открытия, API для комнат). Runtime расширений подключён через
+`usePlayerExtensions` (StrictMode-совместимый lifecycle) + `PlayerSlotsProvider`.
+Два инертных примера в `extensions/examples/` («Постоянная громкость»,
+«Ambient-освещение») документируют API: настройки + storage, чтение mpv-свойства
+через мост, бейдж по среднему цвету кадра — без изменения звука и транспорта.
+Рецепт добавления новой функции — §S2.10 (новый модуль + строка в реестре).
+
+**Verification** — `npm run typecheck` PASS; `npm test` PASS (446 tests /
+31 files; baseline до изменений — 414 / 28); `npm run build` PASS;
+`cargo test` PASS (14 tests, включая guard свойств и guard argv-команд).
+Ревью полного изменения (subagent) → request-changes (1 critical, 2 major,
+2 minor) → фиксы → повторное ревью: 4/5 RESOLVED, guard PARTIAL →
+дополнение guard (флаги команд + `_`-алиасы) → точечная проверка: полный
+набор `cmd_flags[]` mpv (12 флагов) закрыт. Поведенческая сохранность
+декомпозиции подтверждена скриптом сверки русских строк (0 missing) и
+дифф-ревью.
+
+**Journey log** —
+(1) React StrictMode (включён в `main.tsx`) убивает паттерн «ресурс в
+useState-инициализаторе + dispose в cleanup» — инициализатор не перезапускается,
+dispose срабатывает навсегда. Ресурс создавать/уничтожать внутри эффекта
+(как `useRoomSocket`).
+(2) Фильтр argv-команд mpv обязан пропускать префиксы-флаги (полный
+`cmd_flags[]`: 12 штук, включая `osd-auto`/`nonrepeatable`/`nonscalable`) и
+нормализовать `_`→`-` в именах команд (`find_cmd`); свойства матчатся
+case-sensitive.
+(3) `ctx.ui.add` возвращает React-узлы в независимые поддеревья — общее
+состояние между слотами (переключатель настройки + бейдж) делается через
+маленький внешний store + `useSyncExternalStore`.
+(4) Сверка русских литералов через PowerShell даёт ложные расхождения
+(кодировки); проверять через Python UTF-8. Якоря для edit-инструмента в
+файлах с кириллицей — только ASCII-участки (консоль показывает mojibake).
+(5) Отменённые фоновые субагенты оставляют частичные файлы — сверять
+`git status` worktree перед повторным запуском (frameHub/registry уцелели).
 
 ## [S1] Problem
 
@@ -277,9 +324,9 @@ throttle, personal-seek без бродкаста), порядок открыт�
 
 ## Tasks
 
-- [ ] T1: mpv-мост: Rust-команды `player_get_property` / `player_set_property` / `player_command` + TS `bridge/mpvBridge.ts` + чистая сериализация значения с deny-list — acceptance: команды в `generate_handler`, unit-тесты сериализации/запретных имён, `npm run typecheck && npm test && npm run build` зелёные (covers: S2.5)
-- [ ] T2: ядро расширений: `extensions/types.ts`, `registry.ts` (lifecycle, error isolation), `storage.ts` — acceptance: unit-тесты порядка setup/dispose, изоляции ошибок, неймспейса storage (covers: S2.2, S2.3, S2.9)
-- [ ] T3: UI-слоты: `extensions/slots.tsx`, `<PlayerSlot>`, вставки в `PlayerControls` (primary/secondary/settings.menu) и `PlayerSurface` (overlay/sidecar) — acceptance: unit-тесты реестра слотов (add/unsubscribe/порядок), typecheck/build зелёные, пустой слот не влияет на раскладку (covers: S2.4; depends: T2)
-- [ ] T4: frame tap: `extensions/frameHub.ts` (publish, `downsampleRgb`, subscribe с maxFps, reset), публикация кадров из `PlayerSurface` — acceptance: unit-тесты downsample/троттлинга/reset; хаб получает кадры из существующего `FrameStream` (covers: S2.6)
-- [ ] T5: декомпозиция `PlayerScreen` → `useMediaLookup` / `usePlayerOpener` / `useProgressiveGuard` / `useGuardedTransport` — acceptance: внешний API `PlayerScreen` (props для RoomScreen) не изменился, typecheck/tests/build зелёные, поведение копий сообщений/порогов/порядка открытия сохранено (covers: S2.1, S2.7, S2.9)
-- [ ] T6: runtime `usePlayerExtensions` + заглушки `constantVolumeStub` / `ambientLightStub` (зарегистрированы, инертны) + сверка рецепта S2.10 с фактическим API — acceptance: строки-примеры видны в настройках плеера, dispose при размонтировании, включение заглушек не меняет транспорт/звук (кроме бейджа-примера), рецепт из спеки совпадает с именами API (covers: S2.2, S2.8, S2.10; depends: T1, T2, T3, T4, T5)
+- [x] T1: mpv-мост: Rust-команды `player_get_property` / `player_set_property` / `player_command` + TS `bridge/mpvBridge.ts` + чистая сериализация значения с deny-list — acceptance: команды в `generate_handler`, unit-тесты сериализации/запретных имён, `npm run typecheck && npm test && npm run build` зелёные (covers: S2.5)
+- [x] T2: ядро расширений: `extensions/types.ts`, `registry.ts` (lifecycle, error isolation), `storage.ts` — acceptance: unit-тесты порядка setup/dispose, изоляции ошибок, неймспейса storage (covers: S2.2, S2.3, S2.9)
+- [x] T3: UI-слоты: `extensions/slots.tsx`, `<PlayerSlot>`, вставки в `PlayerControls` (primary/secondary/settings.menu) и `PlayerSurface` (overlay/sidecar) — acceptance: unit-тесты реестра слотов (add/unsubscribe/порядок), typecheck/build зелёные, пустой слот не влияет на раскладку (covers: S2.4; depends: T2)
+- [x] T4: frame tap: `extensions/frameHub.ts` (publish, `downsampleRgb`, subscribe с maxFps, reset), публикация кадров из `PlayerSurface` — acceptance: unit-тесты downsample/троттлинга/reset; хаб получает кадры из существующего `FrameStream` (covers: S2.6)
+- [x] T5: декомпозиция `PlayerScreen` → `useMediaLookup` / `usePlayerOpener` / `useProgressiveGuard` / `useGuardedTransport` — acceptance: внешний API `PlayerScreen` (props для RoomScreen) не изменился, typecheck/tests/build зелёные, поведение копий сообщений/порогов/порядка открытия сохранено (covers: S2.1, S2.7, S2.9)
+- [x] T6: runtime `usePlayerExtensions` + заглушки `constantVolumeStub` / `ambientLightStub` (зарегистрированы, инертны) + сверка рецепта S2.10 с фактическим API — acceptance: строки-примеры видны в настройках плеера, dispose при размонтировании, включение заглушек не меняет транспорт/звук (кроме бейджа-примера), рецепт из спеки совпадает с именами API (covers: S2.2, S2.8, S2.10; depends: T1, T2, T3, T4, T5)
