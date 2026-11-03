@@ -361,18 +361,22 @@ pub fn guard_property_name(name: &str) -> Result<(), String> {
     }
 }
 
-/// mpv command flags that may precede the command name in argv
-/// (input/cmd.c `cmd_node_array`). Matched after `_` -> `-` normalization.
+/// mpv command flags that may precede the command name in argv — the full
+/// `cmd_flags[]` set from input/cmd.c (matched after `_` -> `-` normalization;
+/// mpv itself matches flags case-sensitively without normalization).
 const COMMAND_FLAGS: &[&str] = &[
     "no-osd",
     "osd-bar",
     "osd-msg",
     "osd-msg-bar",
+    "osd-auto",
     "raw",
     "expand-properties",
     "async",
     "sync",
     "repeatable",
+    "nonrepeatable",
+    "nonscalable",
 ];
 
 /// Property-writing mpv commands pass the property name as the word after the
@@ -1202,6 +1206,26 @@ mod tests {
             .unwrap_err(),
             "property is reserved"
         );
+        // Every mpv command flag must be skipped (cmd_flags[] in input/cmd.c).
+        for flag in [
+            "no-osd",
+            "osd-bar",
+            "osd-msg",
+            "osd-msg-bar",
+            "osd-auto",
+            "raw",
+            "expand-properties",
+            "async",
+            "sync",
+            "repeatable",
+            "nonrepeatable",
+            "nonscalable",
+        ] {
+            assert_eq!(
+                guard_command_args(&argv(&[flag, "set", "vo", "libmpv"])).unwrap_err(),
+                "property is reserved"
+            );
+        }
         // find_cmd maps `_` to `-` in command names.
         assert_eq!(
             guard_command_args(&argv(&["cycle_values", "vo", "a", "b"])).unwrap_err(),
