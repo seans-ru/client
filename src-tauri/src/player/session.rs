@@ -361,14 +361,41 @@ pub fn guard_property_name(name: &str) -> Result<(), String> {
     }
 }
 
-/// Property-writing mpv commands pass the property name as argv[1] - those
-/// names must respect the same reserved-name guard (`bridge_command` path).
+/// mpv command flags that may precede the command name in argv
+/// (input/cmd.c `cmd_node_array`). Matched after `_` -> `-` normalization.
+const COMMAND_FLAGS: &[&str] = &[
+    "no-osd",
+    "osd-bar",
+    "osd-msg",
+    "osd-msg-bar",
+    "raw",
+    "expand-properties",
+    "async",
+    "sync",
+    "repeatable",
+];
+
+/// Property-writing mpv commands pass the property name as the word after the
+/// command name - those names must respect the same reserved-name guard
+/// (`bridge_command` path). Leading command flags are skipped and `_` acts as
+/// `-` in command names (`cycle_values` == `cycle-values`), matching mpv's
+/// argv parser (input/cmd.c `find_cmd`).
 pub fn guard_command_args(args: &[String]) -> Result<(), String> {
-    let first = args.first().map(String::as_str).ok_or("command args are empty")?;
-    match first {
+    if args.is_empty() {
+        return Err("command args are empty".to_string());
+    }
+    let normalize = |s: &str| s.replace('_', "-");
+    let mut idx = 0;
+    while idx < args.len() && COMMAND_FLAGS.contains(&normalize(&args[idx]).as_str()) {
+        idx += 1;
+    }
+    let Some(name) = args.get(idx) else {
+        return Ok(());
+    };
+    match normalize(name).as_str() {
         "set" | "add" | "cycle" | "cycle-values" | "multiply" | "change-list" => {
-            match args.get(1) {
-                Some(name) => guard_property_name(name),
+            match args.get(idx + 1) {
+                Some(prop) => guard_property_name(prop),
                 None => Ok(()),
             }
         }
@@ -1159,6 +1186,40 @@ mod tests {
     }
 
     #[test]
+    fn bridge_command_guard_survives_flags_and_underscore_aliases() {
+        let argv = |args: &[&str]| -> Vec<String> {
+            args.iter().map(|s| s.to_string()).collect()
+        };
+        // mpv consumes leading command flags before the command name.
+        assert_eq!(
+            guard_command_args(&argv(&["no-osd", "set", "vo", "libmpv"])).unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_command_args(&argv(&[
+                "async", "no-osd", "repeatable", "set", "wid", "1"
+            ]))
+            .unwrap_err(),
+            "property is reserved"
+        );
+        // find_cmd maps `_` to `-` in command names.
+        assert_eq!(
+            guard_command_args(&argv(&["cycle_values", "vo", "a", "b"])).unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_command_args(&argv(&["change_list", "init-options", "add", "x"]))
+                .unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_command_args(&argv(&["no-osd", "cycle_values", "gpu-context", "a"]))
+                .unwrap_err(),
+            "property is reserved"
+        );
+    }
+
+    #[test]
     fn bridge_command_allows_normal_argv() {
         let argv = |args: &[&str]| -> Vec<String> {
             args.iter().map(|s| s.to_string()).collect()
@@ -1167,6 +1228,8 @@ mod tests {
         assert!(guard_command_args(&argv(&["af-add", "@x:lavfi[rn"])).is_ok());
         assert!(guard_command_args(&argv(&["cycle", "pause"])).is_ok());
         assert!(guard_command_args(&argv(&["print-text", "hello"])).is_ok());
+        assert!(guard_command_args(&argv(&["no-osd", "set", "af", "loudnorm"])).is_ok());
+        assert!(guard_command_args(&argv(&["no-osd", "print-text", "hi"])).is_ok());
         assert_eq!(
             guard_command_args(&[]).unwrap_err(),
             "command args are empty"
