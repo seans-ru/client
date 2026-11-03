@@ -19,6 +19,8 @@ import { useSegmentChrome } from "../theintrodb/useSegmentChrome";
 import { EpisodePicker } from "./EpisodePicker";
 import { PanelIcon, PlayerControls } from "./PlayerControls";
 import { CanvasVideoRenderer, FrameStream } from "./frameSink";
+import { frameHub } from "./extensions/frameHub";
+import { PlayerSlot } from "./extensions/slots";
 import { playerFramesUrl } from "./playerApi";
 import { ProgressiveStatus } from "./ProgressiveStatus";
 import {
@@ -140,6 +142,7 @@ export function PlayerSurface({
         if (cancelled) return;
         await stream.connect(url, (frame) => {
           renderer.push(frame.width, frame.height, frame.pixels);
+          frameHub.publishFrame(frame);
         });
       } catch (error) {
         if (!cancelled) console.warn("[player] frame stream:", error);
@@ -148,6 +151,7 @@ export function PlayerSurface({
     return () => {
       cancelled = true;
       stream.close();
+      frameHub.reset();
       renderer.destroy();
     };
   }, []);
@@ -371,6 +375,8 @@ export function PlayerSurface({
                 ) : null}
               </>
             )}
+
+            <PlayerSlot name="overlay" />
           </div>
         </div>
 
@@ -451,6 +457,8 @@ export function PlayerSurface({
                 : ""}
             </p>
           ) : null}
+
+          <PlayerSlot name="sidecar" />
         </aside>
       ) : null}
     </div>

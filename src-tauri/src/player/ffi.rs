@@ -429,6 +429,43 @@ impl MpvApi {
         Ok(())
     }
 
+    /// `mpv_command_ret` capturing a scalar result node as text.
+    ///
+    /// `Ok(None)` when the command has no result or returns a non-scalar node
+    /// (array/map) — the extension bridge only surfaces simple values.
+    pub unsafe fn command_result(
+        &self,
+        handle: *mut MpvHandle,
+        args: &[&str],
+    ) -> Result<Option<String>, String> {
+        let c_args: Result<Vec<CString>, String> =
+            args.iter().map(|s| CString::new(*s).map_err(|e| e.to_string())).collect();
+        let c_args = c_args?;
+        let mut ptrs: Vec<*const c_char> = c_args.iter().map(|c| c.as_ptr()).collect();
+        ptrs.push(ptr::null());
+        let mut node = MpvNode {
+            data: MpvNodeData { int64: 0 },
+            format: MPV_FORMAT_NONE,
+        };
+        let code = (self.command_ret)(handle, ptrs.as_ptr(), &mut node as *mut MpvNode);
+        if code < 0 {
+            return Err(format!("mpv command {:?}: {}", args, self.error_text(code)));
+        }
+        let out = node_string(&node).or_else(|| {
+            node_int64(&node).map(|v| v.to_string()).or_else(|| {
+                node_flag(&node).map(|v| v.to_string()).or_else(|| {
+                    if node.format == MPV_FORMAT_DOUBLE {
+                        Some(node.data.double.to_string())
+                    } else {
+                        None
+                    }
+                })
+            })
+        });
+        self.free_node_contents(&mut node as *mut MpvNode);
+        Ok(out)
+    }
+
     pub unsafe fn observe_property(
         &self,
         handle: *mut MpvHandle,

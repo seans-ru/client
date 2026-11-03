@@ -102,6 +102,9 @@ pub fn run() {
             progressive::commands::progressive_update,
             progressive::commands::progressive_stop,
             progressive::commands::progressive_max_seekable,
+            player::player_get_property,
+            player::player_set_property,
+            player::player_command,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Seans")

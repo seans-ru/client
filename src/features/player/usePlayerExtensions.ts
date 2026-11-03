@@ -1,0 +1,78 @@
+/**
+ * Extension runtime hook (spec: docs/compose/spec/player-extensibility.md
+ * §S2.1, §S2.3). Creates one `ExtensionRuntime` per player session, fans
+ * snapshot updates out to extensions, and disposes on unmount.
+ *
+ * The screen drives `notifyOpen` / `notifyClose` when a source is opened or
+ * torn down; slot rendering happens through `PlayerSlotsProvider` +
+ * `<PlayerSlot>` (see `slots.tsx`).
+ */
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { PlayerSnapshot } from "./playerTypes";
+import { createMpvBridge } from "./bridge/mpvBridge";
+import { frameHub } from "./extensions/frameHub";
+import {
+  createExtensionRuntime,
+  type ExtensionRuntime,
+} from "./extensions/registry";
+import { createExtensionStorage } from "./extensions/storage";
+import type { ExtensionTransport, OpenInfo } from "./extensions/types";
+import { PLAYER_EXTENSIONS } from "./extensions/examples";
+
+export function usePlayerExtensions(args: {
+  /** Same guarded transport the UI uses (identity may change per render). */
+  transport: ExtensionTransport;
+  /** Latest player snapshot — fanned out to `ctx.onSnapshot`. */
+  snapshot: PlayerSnapshot;
+}): ExtensionRuntime | null {
+  const { transport, snapshot } = args;
+
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+  // Extensions capture `ctx.transport` once at setup — route every call
+  // through the latest transport instance.
+  const transportRef = useRef(transport);
+  transportRef.current = transport;
+  const transportFacade = useMemo<ExtensionTransport>(
+    () => ({
+      play: () => transportRef.current.play(),
+      pause: () => transportRef.current.pause(),
+      togglePause: () => transportRef.current.togglePause(),
+      seek: (seconds, opts) => transportRef.current.seek(seconds, opts),
+      setSpeed: (speed) => transportRef.current.setSpeed(speed),
+      setVolume: (volume) => transportRef.current.setVolume(volume),
+      setMute: (mute) => transportRef.current.setMute(mute),
+      setFullscreen: (enabled) => transportRef.current.setFullscreen(enabled),
+    }),
+    [],
+  );
+
+  // One runtime per mounted player session; setup() runs on first render and
+  // dispose() on unmount (StrictMode remount tears down cleanly).
+  const [runtime] = useState<ExtensionRuntime>(() =>
+    createExtensionRuntime(PLAYER_EXTENSIONS, {
+      transport: transportFacade,
+      getSnapshot: () => snapshotRef.current,
+      mpv: createMpvBridge(),
+      frames: {
+        subscribe: (cb, opts) => frameHub.subscribe(cb, opts),
+      },
+      storageFor: createExtensionStorage,
+    }),
+  );
+
+  useEffect(() => {
+    return () => {
+      runtime.dispose();
+    };
+  }, [runtime]);
+
+  useEffect(() => {
+    runtime.notifySnapshot(snapshot);
+  }, [runtime, snapshot]);
+
+  return runtime;
+}
+
+export type { OpenInfo };

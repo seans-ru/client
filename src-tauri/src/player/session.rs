@@ -338,6 +338,29 @@ pub fn clamp_seek(seconds: f64, duration: f64) -> f64 {
     seconds.max(lo).min(hi)
 }
 
+/// Property value accepted by the extension bridge (`player_set_property`).
+/// Untagged serde: JSON string | number | boolean (spec: player-extensibility
+/// §S2.5).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+pub enum PropertyValue {
+    Str(String),
+    Num(f64),
+    Flag(bool),
+}
+
+/// Reserved property names the extension bridge must never write - they
+/// control the embedded render surface and breaking them kills playback.
+pub fn guard_property_name(name: &str) -> Result<(), String> {
+    match name {
+        "" => Err("property name is empty".to_string()),
+        "wid" | "vo" | "gpu-context" | "init-options" => {
+            Err("property is reserved".to_string())
+        }
+        _ => Ok(()),
+    }
+}
+
 unsafe fn read_tracks(api: &MpvApi, handle: *mut MpvHandle) -> Vec<TrackInfo> {
     let mut out = Vec::new();
     let node_ptr = match api.get_property_node(handle, "track-list") {
@@ -850,6 +873,41 @@ pub fn list_tracks() -> Result<Vec<TrackInfo>, String> {
     })
 }
 
+/* ------------------------------------------------- extension bridge (S2.5) */
+
+/// Read any mpv property as its string form (extension bridge).
+pub fn bridge_get_property(name: &str) -> Result<String, String> {
+    if name.is_empty() {
+        return Err("property name is empty".to_string());
+    }
+    with_session(|api, handle, _shared| unsafe {
+        api.get_property_string(handle, name)
+    })
+}
+
+/// Write any mpv property except the reserved render-surface names.
+pub fn bridge_set_property(name: &str, value: PropertyValue) -> Result<(), String> {
+    guard_property_name(name)?;
+    with_session(|api, handle, _shared| unsafe {
+        match value {
+            PropertyValue::Str(v) => api.set_property_string(handle, name, &v),
+            PropertyValue::Num(v) => api.set_property_f64(handle, name, v),
+            PropertyValue::Flag(v) => api.set_property_flag(handle, name, v),
+        }
+    })
+}
+
+/// Run an mpv command; scalar results come back as text, otherwise `None`.
+pub fn bridge_command(args: &[String]) -> Result<Option<String>, String> {
+    if args.is_empty() {
+        return Err("command args are empty".to_string());
+    }
+    with_session(|api, handle, _shared| unsafe {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        api.command_result(handle, &refs)
+    })
+}
+
 /// Toggle/set fullscreen on the Tauri window (video surface follows via resize).
 pub fn set_fullscreen(app: &AppHandle, enabled: bool) -> Result<(), String> {
     let window = app
@@ -1012,7 +1070,7 @@ pub fn main_window_hwnd(app: &AppHandle) -> Result<isize, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{clamp_seek, clamp_speed};
+    use super::{clamp_seek, clamp_speed, guard_property_name};
 
     #[test]
     fn speed_clamps_to_product_range() {
@@ -1030,5 +1088,36 @@ mod tests {
         assert_eq!(clamp_seek(50.0, 100.0), 50.0);
         assert_eq!(clamp_seek(150.0, 100.0), 100.0);
         assert_eq!(clamp_seek(-1.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn bridge_rejects_reserved_property_names() {
+        assert_eq!(
+            guard_property_name("wid").unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_property_name("vo").unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_property_name("gpu-context").unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_property_name("init-options").unwrap_err(),
+            "property is reserved"
+        );
+    }
+
+    #[test]
+    fn bridge_allows_normal_property_names() {
+        assert!(guard_property_name("af").is_ok());
+        assert!(guard_property_name("volume").is_ok());
+        assert!(guard_property_name("lavfi").is_ok());
+        assert_eq!(
+            guard_property_name("").unwrap_err(),
+            "property name is empty"
+        );
     }
 }
