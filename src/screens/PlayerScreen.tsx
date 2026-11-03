@@ -163,13 +163,13 @@ export function PlayerScreen({
   });
   extRuntimeRef.current = extRuntime;
 
-  // File teardown for extensions (open again fires onOpened from the opener).
+  // File switch closes the previous file for extensions (session end is
+  // handled inside usePlayerExtensions, before dispose).
   useEffect(() => {
-    if (openedMode == null) return;
     return () => {
       extRuntimeRef.current?.notifyClose();
     };
-  }, [openedMode]);
+  }, [fileId]);
 
   const playerRef = useRef(player);
   playerRef.current = player;

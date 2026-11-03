@@ -228,6 +228,22 @@ describe("createFrameHub (throttled delivery)", () => {
     vi.advanceTimersByTime(500);
     expect(seen).toEqual([2]);
   });
+
+  it("isolates a throwing callback from the publish loop", () => {
+    const warns = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const hub = createFrameHub();
+    const seen: number[] = [];
+    hub.subscribe(() => {
+      throw new Error("extension frame callback failed");
+    });
+    hub.subscribe((s) => seen.push(s.pts));
+    // A throwing subscriber must not stop the frame loop or other taps.
+    expect(() => hub.publishFrame(makeFrame(1))).not.toThrow();
+    expect(seen).toEqual([1]);
+    vi.advanceTimersByTime(500);
+    expect(seen).toEqual([1]);
+    warns.mockRestore();
+  });
 });
 
 describe("frameHub singleton", () => {

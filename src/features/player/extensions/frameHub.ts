@@ -75,6 +75,18 @@ type Subscriber = {
   pending: boolean;
 };
 
+/**
+ * Deliver a sample to one subscriber. Errors are isolated here: a throwing
+ * callback must never escape into the `FrameStream` read loop (spec §S2.3).
+ */
+function deliver(sub: Subscriber, sample: FrameSample): void {
+  try {
+    sub.cb(sample);
+  } catch (error) {
+    console.warn("[player.ext] frame callback", error);
+  }
+}
+
 export function createFrameHub(): FrameHub {
   /** Latest cached sample (computed at most once per published frame). */
   let latest: FrameSample | null = null;
@@ -86,7 +98,7 @@ export function createFrameHub(): FrameHub {
       sub.timer = null;
       if (!sub.pending || !latest) return;
       sub.pending = false;
-      sub.cb(latest);
+      deliver(sub, latest);
       armWindowEnd(sub);
     }, sub.windowMs);
   };
@@ -106,7 +118,7 @@ export function createFrameHub(): FrameHub {
         if (sub.timer === null) {
           // Leading edge: first frame after subscribe / after a quiet window.
           sub.pending = false;
-          sub.cb(sample);
+          deliver(sub, sample);
           armWindowEnd(sub);
         } else {
           // Inside the window — latest wins, delivered at window end.

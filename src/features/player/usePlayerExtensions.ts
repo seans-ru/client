@@ -48,10 +48,14 @@ export function usePlayerExtensions(args: {
     [],
   );
 
-  // One runtime per mounted player session; setup() runs on first render and
-  // dispose() on unmount (StrictMode remount tears down cleanly).
-  const [runtime] = useState<ExtensionRuntime>(() =>
-    createExtensionRuntime(PLAYER_EXTENSIONS, {
+  // One runtime per mounted player session. Created inside the effect (not a
+  // state initializer): React StrictMode runs setup→cleanup→setup and would
+  // otherwise keep a disposed runtime while its initializer never re-runs.
+  // The effect cleanup pairs every setup with a dispose, same as useRoomSocket.
+  const [runtime, setRuntime] = useState<ExtensionRuntime | null>(null);
+
+  useEffect(() => {
+    const created = createExtensionRuntime(PLAYER_EXTENSIONS, {
       transport: transportFacade,
       getSnapshot: () => snapshotRef.current,
       mpv: createMpvBridge(),
@@ -59,17 +63,17 @@ export function usePlayerExtensions(args: {
         subscribe: (cb, opts) => frameHub.subscribe(cb, opts),
       },
       storageFor: createExtensionStorage,
-    }),
-  );
-
-  useEffect(() => {
+    });
+    setRuntime(created);
     return () => {
-      runtime.dispose();
+      // Session end closes the current file before tearing extensions down.
+      created.notifyClose();
+      created.dispose();
     };
-  }, [runtime]);
+  }, [transportFacade]);
 
   useEffect(() => {
-    runtime.notifySnapshot(snapshot);
+    runtime?.notifySnapshot(snapshot);
   }, [runtime, snapshot]);
 
   return runtime;

@@ -452,15 +452,19 @@ impl MpvApi {
             return Err(format!("mpv command {:?}: {}", args, self.error_text(code)));
         }
         let out = node_string(&node).or_else(|| {
-            node_int64(&node).map(|v| v.to_string()).or_else(|| {
-                node_flag(&node).map(|v| v.to_string()).or_else(|| {
+            // FLAG before INT64: `node_int64` also matches FLAG and would
+            // stringify booleans as "1"/"0".
+            if node.format == MPV_FORMAT_FLAG {
+                node_flag(&node).map(|v| v.to_string())
+            } else {
+                node_int64(&node).map(|v| v.to_string()).or_else(|| {
                     if node.format == MPV_FORMAT_DOUBLE {
                         Some(node.data.double.to_string())
                     } else {
                         None
                     }
                 })
-            })
+            }
         });
         self.free_node_contents(&mut node as *mut MpvNode);
         Ok(out)

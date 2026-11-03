@@ -361,6 +361,21 @@ pub fn guard_property_name(name: &str) -> Result<(), String> {
     }
 }
 
+/// Property-writing mpv commands pass the property name as argv[1] - those
+/// names must respect the same reserved-name guard (`bridge_command` path).
+pub fn guard_command_args(args: &[String]) -> Result<(), String> {
+    let first = args.first().map(String::as_str).ok_or("command args are empty")?;
+    match first {
+        "set" | "add" | "cycle" | "cycle-values" | "multiply" | "change-list" => {
+            match args.get(1) {
+                Some(name) => guard_property_name(name),
+                None => Ok(()),
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
 unsafe fn read_tracks(api: &MpvApi, handle: *mut MpvHandle) -> Vec<TrackInfo> {
     let mut out = Vec::new();
     let node_ptr = match api.get_property_node(handle, "track-list") {
@@ -899,9 +914,7 @@ pub fn bridge_set_property(name: &str, value: PropertyValue) -> Result<(), Strin
 
 /// Run an mpv command; scalar results come back as text, otherwise `None`.
 pub fn bridge_command(args: &[String]) -> Result<Option<String>, String> {
-    if args.is_empty() {
-        return Err("command args are empty".to_string());
-    }
+    guard_command_args(args)?;
     with_session(|api, handle, _shared| unsafe {
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         api.command_result(handle, &refs)
@@ -1070,7 +1083,7 @@ pub fn main_window_hwnd(app: &AppHandle) -> Result<isize, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{clamp_seek, clamp_speed, guard_property_name};
+    use super::{clamp_seek, clamp_speed, guard_command_args, guard_property_name};
 
     #[test]
     fn speed_clamps_to_product_range() {
@@ -1118,6 +1131,45 @@ mod tests {
         assert_eq!(
             guard_property_name("").unwrap_err(),
             "property name is empty"
+        );
+    }
+
+    #[test]
+    fn bridge_command_cannot_write_reserved_properties() {
+        let argv = |args: &[&str]| -> Vec<String> {
+            args.iter().map(|s| s.to_string()).collect()
+        };
+        assert_eq!(
+            guard_command_args(&argv(&["set", "vo", "libmpv"])).unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_command_args(&argv(&["set", "wid", "123"])).unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_command_args(&argv(&["cycle", "gpu-context"])).unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_command_args(&argv(&["change-list", "init-options", "add", "x"]))
+                .unwrap_err(),
+            "property is reserved"
+        );
+    }
+
+    #[test]
+    fn bridge_command_allows_normal_argv() {
+        let argv = |args: &[&str]| -> Vec<String> {
+            args.iter().map(|s| s.to_string()).collect()
+        };
+        assert!(guard_command_args(&argv(&["set", "af", "loudnorm"])).is_ok());
+        assert!(guard_command_args(&argv(&["af-add", "@x:lavfi[rn"])).is_ok());
+        assert!(guard_command_args(&argv(&["cycle", "pause"])).is_ok());
+        assert!(guard_command_args(&argv(&["print-text", "hello"])).is_ok());
+        assert_eq!(
+            guard_command_args(&[]).unwrap_err(),
+            "command args are empty"
         );
     }
 }
