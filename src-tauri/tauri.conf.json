@@ -41,6 +41,12 @@
     ],
     "resources": {
       "resources/mpv/*": "mpv/"
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
+      }
     }
   },
   "plugins": {
