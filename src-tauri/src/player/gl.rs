@@ -92,7 +92,6 @@ type FnGlPixelStorei = unsafe extern "system" fn(u32, i32);
 type FnGlViewport = unsafe extern "system" fn(i32, i32, i32, i32);
 type FnGlFinish = unsafe extern "system" fn();
 type FnGlGetString = unsafe extern "system" fn(u32) -> *const c_char;
-type FnGlGetError = unsafe extern "system" fn() -> u32;
 type FnGlClearColor = unsafe extern "system" fn(f32, f32, f32, f32);
 type FnGlClear = unsafe extern "system" fn(u32);
 type FnGlGenTextures = unsafe extern "system" fn(i32, *mut u32);
@@ -129,7 +128,6 @@ struct GlApi {
     gl_viewport: FnGlViewport,
     gl_finish: FnGlFinish,
     gl_get_string: FnGlGetString,
-    gl_get_error: FnGlGetError,
     gl_clear_color: FnGlClearColor,
     gl_clear: FnGlClear,
     gl_gen_textures: FnGlGenTextures,
@@ -183,7 +181,6 @@ impl GlApi {
             gl_viewport: sym(&opengl, b"glViewport\0")?,
             gl_finish: sym(&opengl, b"glFinish\0")?,
             gl_get_string: sym(&opengl, b"glGetString\0")?,
-            gl_get_error: sym(&opengl, b"glGetError\0")?,
             gl_clear_color: sym(&opengl, b"glClearColor\0")?,
             gl_clear: sym(&opengl, b"glClear\0")?,
             gl_gen_textures: sym(&opengl, b"glGenTextures\0")?,
@@ -513,11 +510,6 @@ impl GlSurface {
             );
         }
         buf
-    }
-
-    /// Make the context current on the calling thread (thread hand-off).
-    pub fn make_current(&self) -> bool {
-        unsafe { (self.api.wgl_make_current)(self.hdc, self.hglrc) != 0 }
     }
 }
 

@@ -108,8 +108,9 @@ pub fn player_get_state() -> Result<PlayerSnapshot, String> {
 #[tauri::command]
 pub fn player_destroy() -> Result<(), String> {
     session::destroy();
-    // Progressive source is per-open; drop it with the player.
+    // Progressive source and frame stream are per-open; drop them with the player.
     crate::progressive::stop();
+    super::frames::stop();
     Ok(())
 }
 
@@ -157,4 +158,30 @@ pub fn player_sync_size(rect: Option<SyncRect>) -> Result<(), String> {
 #[tauri::command]
 pub fn player_frames_url() -> Result<String, String> {
     super::frames::ensure_started()
+}
+
+/* ---------------------------------------------- extension bridge (S2.5) --- */
+
+/// Read any mpv property as its string form (generic extension bridge).
+#[tauri::command]
+pub fn player_get_property(name: String) -> Result<String, String> {
+    session::bridge_get_property(&name)
+}
+
+/// Write any mpv property except reserved render-surface names
+/// (`wid`, `vo`, `gpu-context`, `init-options`). `value` is an untagged
+/// JSON string | number | boolean.
+#[tauri::command]
+pub fn player_set_property(
+    name: String,
+    value: session::PropertyValue,
+) -> Result<(), String> {
+    session::bridge_set_property(&name, value)
+}
+
+/// Run a raw mpv command (argv). Scalar results come back as text;
+/// `None` when the command returns nothing or a non-scalar node.
+#[tauri::command]
+pub fn player_command(args: Vec<String>) -> Result<Option<String>, String> {
+    session::bridge_command(&args)
 }

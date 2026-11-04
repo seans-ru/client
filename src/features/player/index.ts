@@ -90,3 +90,48 @@ export {
   progressiveStop,
   progressiveUpdate,
 } from "./progressiveApi";
+/* Extension surface (spec: docs/compose/spec/player-extensibility.md). */
+export { usePlayerExtensions } from "./usePlayerExtensions";
+export { PlayerSlot, PlayerSlotsProvider, useSlotEntries } from "./extensions/slots";
+export { createExtensionRuntime } from "./extensions/registry";
+export type {
+  ExtensionRuntime,
+  ExtensionRuntimeDeps,
+  SlotEntry,
+} from "./extensions/registry";
+export { createFrameHub, downsampleRgb, frameHub } from "./extensions/frameHub";
+export type { FrameHub } from "./extensions/frameHub";
+export {
+  createExtensionStorage,
+  extensionStorageKey,
+} from "./extensions/storage";
+export {
+  createMpvBridge,
+  playerCommand,
+  playerGetProperty,
+  playerSetProperty,
+  preparePropertyWrite,
+} from "./bridge/mpvBridge";
+export type {
+  ExtensionStorage,
+  ExtensionTransport,
+  FrameSample,
+  MpvBridge,
+  OpenInfo,
+  PlayerExtension,
+  PlayerExtensionContext,
+  PlayerUiSlot,
+  Unsubscribe,
+} from "./extensions/types";
+export { PLAYER_EXTENSIONS } from "./extensions/examples";
+export {
+  findLibraryFileForEpisode,
+  useMediaLookup,
+} from "./useMediaLookup";
+export { usePlayerOpener } from "./usePlayerOpener";
+export { useProgressiveGuard } from "./useProgressiveGuard";
+export { useGuardedTransport } from "./useGuardedTransport";
+export type {
+  RoomTransport,
+  RoomTransportAction,
+} from "./useGuardedTransport";

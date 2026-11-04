@@ -20,7 +20,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::ffi::{
-    self, MpvApi, MpvHandle, MpvNodeList, MPV_END_FILE_REASON_ERROR, MPV_EVENT_END_FILE,
+    self, MpvApi, MpvHandle, MpvNodeList, MPV_END_FILE_REASON_EOF, MPV_END_FILE_REASON_ERROR,
+    MPV_EVENT_END_FILE,
     MPV_EVENT_FILE_LOADED, MPV_EVENT_IDLE, MPV_EVENT_PAUSE, MPV_EVENT_PLAYBACK_RESTART,
     MPV_EVENT_PROPERTY_CHANGE, MPV_EVENT_SHUTDOWN, MPV_EVENT_TRACKS_CHANGED, MPV_EVENT_UNPAUSE,
     MPV_FORMAT_FLAG, MPV_FORMAT_NODE_ARRAY, MPV_FORMAT_NODE_MAP, MPV_FORMAT_STRING,
@@ -335,6 +336,75 @@ pub fn clamp_seek(seconds: f64, duration: f64) -> f64 {
         f64::MAX
     };
     seconds.max(lo).min(hi)
+}
+
+/// Property value accepted by the extension bridge (`player_set_property`).
+/// Untagged serde: JSON string | number | boolean (spec: player-extensibility
+/// §S2.5).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+pub enum PropertyValue {
+    Str(String),
+    Num(f64),
+    Flag(bool),
+}
+
+/// Reserved property names the extension bridge must never write - they
+/// control the embedded render surface and breaking them kills playback.
+pub fn guard_property_name(name: &str) -> Result<(), String> {
+    match name {
+        "" => Err("property name is empty".to_string()),
+        "wid" | "vo" | "gpu-context" | "init-options" => {
+            Err("property is reserved".to_string())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// mpv command flags that may precede the command name in argv — the full
+/// `cmd_flags[]` set from input/cmd.c (matched after `_` -> `-` normalization;
+/// mpv itself matches flags case-sensitively without normalization).
+const COMMAND_FLAGS: &[&str] = &[
+    "no-osd",
+    "osd-bar",
+    "osd-msg",
+    "osd-msg-bar",
+    "osd-auto",
+    "raw",
+    "expand-properties",
+    "async",
+    "sync",
+    "repeatable",
+    "nonrepeatable",
+    "nonscalable",
+];
+
+/// Property-writing mpv commands pass the property name as the word after the
+/// command name - those names must respect the same reserved-name guard
+/// (`bridge_command` path). Leading command flags are skipped and `_` acts as
+/// `-` in command names (`cycle_values` == `cycle-values`), matching mpv's
+/// argv parser (input/cmd.c `find_cmd`).
+pub fn guard_command_args(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("command args are empty".to_string());
+    }
+    let normalize = |s: &str| s.replace('_', "-");
+    let mut idx = 0;
+    while idx < args.len() && COMMAND_FLAGS.contains(&normalize(&args[idx]).as_str()) {
+        idx += 1;
+    }
+    let Some(name) = args.get(idx) else {
+        return Ok(());
+    };
+    match normalize(name).as_str() {
+        "set" | "add" | "cycle" | "cycle-values" | "multiply" | "change-list" => {
+            match args.get(idx + 1) {
+                Some(prop) => guard_property_name(prop),
+                None => Ok(()),
+            }
+        }
+        _ => Ok(()),
+    }
 }
 
 unsafe fn read_tracks(api: &MpvApi, handle: *mut MpvHandle) -> Vec<TrackInfo> {
@@ -849,6 +919,39 @@ pub fn list_tracks() -> Result<Vec<TrackInfo>, String> {
     })
 }
 
+/* ------------------------------------------------- extension bridge (S2.5) */
+
+/// Read any mpv property as its string form (extension bridge).
+pub fn bridge_get_property(name: &str) -> Result<String, String> {
+    if name.is_empty() {
+        return Err("property name is empty".to_string());
+    }
+    with_session(|api, handle, _shared| unsafe {
+        api.get_property_string(handle, name)
+    })
+}
+
+/// Write any mpv property except the reserved render-surface names.
+pub fn bridge_set_property(name: &str, value: PropertyValue) -> Result<(), String> {
+    guard_property_name(name)?;
+    with_session(|api, handle, _shared| unsafe {
+        match value {
+            PropertyValue::Str(v) => api.set_property_string(handle, name, &v),
+            PropertyValue::Num(v) => api.set_property_f64(handle, name, v),
+            PropertyValue::Flag(v) => api.set_property_flag(handle, name, v),
+        }
+    })
+}
+
+/// Run an mpv command; scalar results come back as text, otherwise `None`.
+pub fn bridge_command(args: &[String]) -> Result<Option<String>, String> {
+    guard_command_args(args)?;
+    with_session(|api, handle, _shared| unsafe {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        api.command_result(handle, &refs)
+    })
+}
+
 /// Toggle/set fullscreen on the Tauri window (video surface follows via resize).
 pub fn set_fullscreen(app: &AppHandle, enabled: bool) -> Result<(), String> {
     let window = app
@@ -942,8 +1045,7 @@ fn event_loop(
                             snap.pause = true;
                             snap.file_loaded = false;
                             emit_state(&app, &snap);
-                        } else if reason == 0 {
-                            // EOF
+                        } else if reason == MPV_END_FILE_REASON_EOF {
                             snap.eof = true;
                             snap.pause = true;
                             emit_state(&app, &snap);
@@ -1012,7 +1114,7 @@ pub fn main_window_hwnd(app: &AppHandle) -> Result<isize, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{clamp_seek, clamp_speed};
+    use super::{clamp_seek, clamp_speed, guard_command_args, guard_property_name};
 
     #[test]
     fn speed_clamps_to_product_range() {
@@ -1030,5 +1132,131 @@ mod tests {
         assert_eq!(clamp_seek(50.0, 100.0), 50.0);
         assert_eq!(clamp_seek(150.0, 100.0), 100.0);
         assert_eq!(clamp_seek(-1.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn bridge_rejects_reserved_property_names() {
+        assert_eq!(
+            guard_property_name("wid").unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_property_name("vo").unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_property_name("gpu-context").unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_property_name("init-options").unwrap_err(),
+            "property is reserved"
+        );
+    }
+
+    #[test]
+    fn bridge_allows_normal_property_names() {
+        assert!(guard_property_name("af").is_ok());
+        assert!(guard_property_name("volume").is_ok());
+        assert!(guard_property_name("lavfi").is_ok());
+        assert_eq!(
+            guard_property_name("").unwrap_err(),
+            "property name is empty"
+        );
+    }
+
+    #[test]
+    fn bridge_command_cannot_write_reserved_properties() {
+        let argv = |args: &[&str]| -> Vec<String> {
+            args.iter().map(|s| s.to_string()).collect()
+        };
+        assert_eq!(
+            guard_command_args(&argv(&["set", "vo", "libmpv"])).unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_command_args(&argv(&["set", "wid", "123"])).unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_command_args(&argv(&["cycle", "gpu-context"])).unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_command_args(&argv(&["change-list", "init-options", "add", "x"]))
+                .unwrap_err(),
+            "property is reserved"
+        );
+    }
+
+    #[test]
+    fn bridge_command_guard_survives_flags_and_underscore_aliases() {
+        let argv = |args: &[&str]| -> Vec<String> {
+            args.iter().map(|s| s.to_string()).collect()
+        };
+        // mpv consumes leading command flags before the command name.
+        assert_eq!(
+            guard_command_args(&argv(&["no-osd", "set", "vo", "libmpv"])).unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_command_args(&argv(&[
+                "async", "no-osd", "repeatable", "set", "wid", "1"
+            ]))
+            .unwrap_err(),
+            "property is reserved"
+        );
+        // Every mpv command flag must be skipped (cmd_flags[] in input/cmd.c).
+        for flag in [
+            "no-osd",
+            "osd-bar",
+            "osd-msg",
+            "osd-msg-bar",
+            "osd-auto",
+            "raw",
+            "expand-properties",
+            "async",
+            "sync",
+            "repeatable",
+            "nonrepeatable",
+            "nonscalable",
+        ] {
+            assert_eq!(
+                guard_command_args(&argv(&[flag, "set", "vo", "libmpv"])).unwrap_err(),
+                "property is reserved"
+            );
+        }
+        // find_cmd maps `_` to `-` in command names.
+        assert_eq!(
+            guard_command_args(&argv(&["cycle_values", "vo", "a", "b"])).unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_command_args(&argv(&["change_list", "init-options", "add", "x"]))
+                .unwrap_err(),
+            "property is reserved"
+        );
+        assert_eq!(
+            guard_command_args(&argv(&["no-osd", "cycle_values", "gpu-context", "a"]))
+                .unwrap_err(),
+            "property is reserved"
+        );
+    }
+
+    #[test]
+    fn bridge_command_allows_normal_argv() {
+        let argv = |args: &[&str]| -> Vec<String> {
+            args.iter().map(|s| s.to_string()).collect()
+        };
+        assert!(guard_command_args(&argv(&["set", "af", "loudnorm"])).is_ok());
+        assert!(guard_command_args(&argv(&["af-add", "@x:lavfi[rn"])).is_ok());
+        assert!(guard_command_args(&argv(&["cycle", "pause"])).is_ok());
+        assert!(guard_command_args(&argv(&["print-text", "hello"])).is_ok());
+        assert!(guard_command_args(&argv(&["no-osd", "set", "af", "loudnorm"])).is_ok());
+        assert!(guard_command_args(&argv(&["no-osd", "print-text", "hi"])).is_ok());
+        assert_eq!(
+            guard_command_args(&[]).unwrap_err(),
+            "command args are empty"
+        );
     }
 }

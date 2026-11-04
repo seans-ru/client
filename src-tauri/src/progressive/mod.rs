@@ -223,6 +223,8 @@ pub fn current_max_seekable() -> u64 {
 }
 
 /// Diagnostics: bound port (0 when not running).
+// #TODO: surface in a diagnostics command next to `current_max_seekable`.
+#[allow(dead_code)]
 pub fn current_port() -> u16 {
     server_slot()
         .lock()
@@ -508,32 +510,9 @@ pub fn segments_from_json(values: &[serde_json::Value]) -> Vec<SegmentSpec> {
     out
 }
 
-/// Clip a requested byte range to the seekable prefix (pure helper).
-pub fn clip_to_seekable(start: u64, end: u64, max_seekable: u64) -> (u64, u64) {
-    if max_seekable == 0 {
-        return (0, 0);
-    }
-    let s = start.min(max_seekable);
-    let e = end.min(max_seekable.saturating_sub(1));
-    if s > e {
-        (s, s)
-    } else {
-        (s, e)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn clip_never_exceeds_prefix() {
-        assert_eq!(clip_to_seekable(0, 1000, 250), (0, 249));
-        assert_eq!(clip_to_seekable(200, 1000, 250), (200, 249));
-        // Entirely past the prefix: empty at the ceiling (start clipped).
-        assert_eq!(clip_to_seekable(300, 1000, 250), (250, 250));
-        assert_eq!(clip_to_seekable(0, 10, 0), (0, 0));
-    }
 
     #[test]
     fn parse_range_header() {

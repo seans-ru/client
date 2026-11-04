@@ -31,6 +31,7 @@ import {
   formatSeekableUntil,
   seekableRailRatio,
 } from "./progressiveHelpers";
+import { PlayerSlot } from "./extensions/slots";
 
 export type PlayerControlsProps = {
   snapshot: PlayerSnapshot;
@@ -428,6 +429,8 @@ function SettingsMenu({
               </div>
             </section>
           ) : null}
+
+          <PlayerSlot name="settings.menu" />
     </div>
   );
 
@@ -562,6 +565,8 @@ export function PlayerControls({
           <span className="player-time-muted"> / {formatTime(duration)}</span>
         </span>
 
+        <PlayerSlot name="controls.primary" />
+
         <div className="player-transport-spacer" />
 
         <button
@@ -584,6 +589,8 @@ export function PlayerControls({
           aria-label="Громкость"
           title="Громкость (↑ / ↓)"
         />
+
+        <PlayerSlot name="controls.secondary" />
 
         <SettingsMenu
           snapshot={snapshot}
