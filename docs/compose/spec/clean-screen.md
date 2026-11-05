@@ -1,14 +1,59 @@
 ---
 feature: clean-screen
-status: in-progress
+status: delivered
 updated: 2026-11-05
 branch: feat/clean-screen
-commits:
+commits: ebd1e68..a450d7e
 ---
 
 # Clean Screen — автоскрытие контролов и курсора
 
 ## Report
+
+**What was built** — Автоскрытие контролов и курсора (п. а #22). Расширение
+`extensions/autohide` (зарегистрировано в `PLAYER_EXTENSIONS`) после N секунд
+бездействия во время воспроизведения скрывает полосу управления
+(`.player-transport`) и курсор над видео; движение мыши, клик, клавиша или
+колесо возвращают хром и перезапускают отсчёт; на паузе / без файла / на eof
+контролы видны всегда. Настройки в меню плеера: задержка 2–10 с (чипы, дефолт
+3 с) и тумблер «Не скрывать» (дефолт выкл); состояние в `ctx.storage`
+(`seans.player.ext.autohide.*`).
+
+В ядре — только минимальный актуатор: `ctx.ui.setChromeHidden` (расширение
+контракта расширений), стор `extensions/chromeControl` (паттерн frameHub) и
+класс `player-chrome-hidden` в `PlayerSurface` / `player.css`
+(`visibility: hidden` на транспорте, `cursor: none` на видео-зоне).
+Skip-кнопки TheIntroDB, `ProgressiveStatus` и попапы не скрываются. `dispose`
+расширения возвращает контролы и курсор, `chromeControl.reset()` страхует
+teardown сессии. Удалена мёртвая константа `OVERLAY_IDLE_MS`. Замороженные
+контракты портинга не тронуты.
+
+**Verification** —
+- `npm run typecheck` — PASS;
+- `npm test` — PASS (463 tests / 33 files; база до изменений — 446 / 31);
+- `npm run build` — PASS (vite-warning про dynamic/static импорт
+  `@tauri-apps/api` — PRE-EXISTING, не связан с изменением);
+- ревью полного диффа `ebd1e68..0c298a6` (subagent): 0 critical / 0 major /
+  2 minor. Minor №1 (бухгалтерия отчёта) закрыт этой финализацией; minor №2
+  (тест не пинил несдвигание дедлайна тиками позиции) закрыт коммитом
+  `a450d7e`;
+- ручной смоук в Tauri в среде сборки не выполнялся (нет запущенного
+  приложения с медиа). Чеклист для разработчика: 3 с бездействия при
+  воспроизведении → контролы и курсор исчезли; движение/клик/клавиша →
+  вернулись; пауза → контролы всегда видны; «Не скрывать» → не скрывает;
+  чипы задержки меняют тайминг; настройки переживают перезапуск.
+
+**Journey log** —
+(1) Якоря edit-инструмента в файлах с кириллицей — только ASCII-участки:
+строки с «—» из консольного вывода не совпадают с файлом (mojibake).
+(2) Снапшоты `player://state` приходят тиками позиции — таймер простоя нельзя
+перезапускать на каждом снапшоте (иначе не спрячется никогда). Правило:
+`arm()` только при `timer === null && !hidden`; отдельный тест это пинит.
+(3) Актёр `setChromeHidden` звался и без смены состояния — юнит-тесты поймали
+это как лишний `false` в истории вызовов; переключение сведено к реальным
+переходам.
+(4) База ветки — `origin/stage`, а не `origin/main`: main отстал и не содержит
+архитектуры `extensions/`, на которой фича построена.
 
 ## [S1] Problem
 
@@ -162,13 +207,13 @@ export function clampDelaySec(value: number | null | undefined): number;
 
 ## Tasks
 
-- [ ] T1: актуатор: `chromeControl` (стор + фабрика), `ctx.ui.setChromeHidden`
+- [x] T1: актуатор: `chromeControl` (стор + фабрика), `ctx.ui.setChromeHidden`
   (types.ts + registry deps + тесты реестра), подписка PlayerSurface, класс
   `player-chrome-hidden` и CSS — acceptance: юнит-тесты стора
   (set/subscribe/reset) и проводки `setChromeHidden` через реестр (spy в
   deps), CSS-правила класса на месте (`.player-transport` скрыт,
   `cursor: none` на видео-зоне), `npm run typecheck` зелёный (covers: S2.1)
-- [ ] T2: расширение `autoHide`: `autoHidePolicy`, `startActivityListener`,
+- [x] T2: расширение `autoHide`: `autoHidePolicy`, `startActivityListener`,
   таймер и правила (play / pause / eof / «Не скрывать»), настройки (чипы
   2–10 с + тумблер) в `settings.menu` + `ctx.storage`, строка в
   `PLAYER_EXTENSIONS`, dispose восстанавливает видимость; удалить
@@ -176,6 +221,6 @@ export function clampDelaySec(value: number | null | undefined): number;
   со fake timers (скрытие по бездействию, возврат по активности, пауза,
   «Не скрывать», dispose), `npm run typecheck && npm test` зелёные
   (covers: S2.2, S2.3, S2.4; depends: T1)
-- [ ] T3: полный порог и смоук-чеклист — acceptance:
+- [x] T3: полный порог и смоук-чеклист — acceptance:
   `npm run typecheck && npm test && npm run build` зелёные; смоук-чеклист
   вынесен в Report (covers: S2.5; depends: T2)
