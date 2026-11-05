@@ -162,6 +162,20 @@ describe("autoHide extension (registry scenarios)", () => {
     host.runtime?.dispose();
   });
 
+  it("position ticks do not extend the idle deadline", () => {
+    const host = setup();
+    host.emit({ file_loaded: true, pause: false });
+    // Frequent `player://state` ticks must not re-arm the countdown:
+    // the hide happens at the original deadline, not tick + delay.
+    vi.advanceTimersByTime(1000);
+    host.emit({ position: 1 });
+    vi.advanceTimersByTime(1000);
+    host.emit({ position: 2 });
+    vi.advanceTimersByTime(1000);
+    expect(host.hiddenCalls).toEqual([true]);
+    host.runtime?.dispose();
+  });
+
   it("respects a custom delay from storage", () => {
     const host = setup({
       storageFor: () => ({
