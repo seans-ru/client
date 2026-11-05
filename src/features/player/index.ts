@@ -14,7 +14,6 @@ export {
   formatTrackLabel,
   MAX_SPEED,
   MIN_SPEED,
-  OVERLAY_IDLE_MS,
   parseTrackId,
   positionPercent,
   ratioToPosition,

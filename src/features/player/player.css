@@ -35,6 +35,16 @@
   cursor: pointer;
 }
 
+/* Idle-hide chrome (docs/compose/spec/clean-screen.md): driven by
+   ctx.ui.setChromeHidden -> class on the surface root. */
+.player-chrome-hidden .player-transport {
+  visibility: hidden;
+}
+
+.player-chrome-hidden .player-video-area {
+  cursor: none;
+}
+
 /* Frame-stream surface: mpv pixels arrive here; chrome overlays in DOM. */
 .player-video-canvas {
   position: absolute;

@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PlayerSnapshot } from "./playerTypes";
 import { createMpvBridge } from "./bridge/mpvBridge";
+import { chromeControl } from "./extensions/chromeControl";
 import { frameHub } from "./extensions/frameHub";
 import {
   createExtensionRuntime,
@@ -63,12 +64,15 @@ export function usePlayerExtensions(args: {
         subscribe: (cb, opts) => frameHub.subscribe(cb, opts),
       },
       storageFor: createExtensionStorage,
+      setChromeHidden: (hidden) => chromeControl.setHidden(hidden),
     });
     setRuntime(created);
     return () => {
       // Session end closes the current file before tearing extensions down.
       created.notifyClose();
       created.dispose();
+      // Belt and braces: a half-registered extension may leave chrome hidden.
+      chromeControl.reset();
     };
   }, [transportFacade]);
 

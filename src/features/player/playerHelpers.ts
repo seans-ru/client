@@ -15,9 +15,6 @@ export const SPEED_OPTIONS: readonly number[] = [0.25, 0.5, 1, 1.25, 1.5, 2];
 /** Keyboard seek step in seconds (← / →). */
 export const SEEK_STEP_SEC = 5;
 
-/** Overlay auto-hide delay after mouse idle, milliseconds. */
-export const OVERLAY_IDLE_MS = 3000;
-
 /**
  * Format seconds as `mm:ss` (or `h:mm:ss` when >= 1 hour).
  * Non-finite / negative input is treated as 0. Fractional seconds truncate.

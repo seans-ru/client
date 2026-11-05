@@ -30,6 +30,8 @@ export type ExtensionRuntimeDeps = {
   frames: PlayerExtensionContext["frames"];
   /** Namespaced storage per extension (see `storage.ts`). */
   storageFor: (extId: string) => ExtensionStorage;
+  /** Chrome visibility actuator (`ctx.ui.setChromeHidden`). */
+  setChromeHidden: (hidden: boolean) => void;
 };
 
 export type SlotEntry = {
@@ -160,6 +162,7 @@ export function createExtensionRuntime(
             }
           };
         },
+        setChromeHidden: (hidden) => deps.setChromeHidden(hidden),
       },
       storage: deps.storageFor(ext.id),
     };

@@ -77,6 +77,9 @@ export type PlayerExtensionContext = {
   readonly ui: {
     /** Render contributes a self-contained React subtree to a chrome slot. */
     add(slot: PlayerUiSlot, render: () => ReactNode): Unsubscribe;
+    /** Hide/show the player chrome (transport + cursor over the video).
+        Visible by default; extensions restore visibility on dispose. */
+    setChromeHidden(hidden: boolean): void;
   };
   readonly storage: ExtensionStorage;
 };
