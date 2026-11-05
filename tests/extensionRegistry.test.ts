@@ -33,6 +33,7 @@ function makeDeps(overrides: Partial<ExtensionRuntimeDeps> = {}): ExtensionRunti
     },
     frames: { subscribe: () => () => {} },
     storageFor: (extId) => createExtensionStorage(extId),
+    setChromeHidden: () => {},
     ...overrides,
   };
 }
@@ -240,6 +241,23 @@ describe("createExtensionRuntime (slots)", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].render()).toBeNull();
     warns.mockRestore();
+    runtime.dispose();
+  });
+});
+
+describe("createExtensionRuntime (chrome)", () => {
+  it("routes ctx.ui.setChromeHidden to the host actuator", () => {
+    const calls: boolean[] = [];
+    const runtime = createExtensionRuntime(
+      [
+        ext("a", (ctx) => {
+          ctx.ui.setChromeHidden(true);
+          ctx.ui.setChromeHidden(false);
+        }),
+      ],
+      makeDeps({ setChromeHidden: (hidden) => calls.push(hidden) }),
+    );
+    expect(calls).toEqual([true, false]);
     runtime.dispose();
   });
 });

@@ -8,7 +8,7 @@
  * chrome (transport, keyboard, sidecar, progressive toasts).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { Button, ErrorState, Spinner } from "../../design/primitives";
 import { CreditsPopup } from "../theintrodb/CreditsPopup";
@@ -16,6 +16,7 @@ import { SkipButtons } from "../theintrodb/SegmentChrome";
 import { EMPTY_BUNDLE } from "../theintrodb/types";
 import type { TheIntroDbBundle } from "../theintrodb/types";
 import { useSegmentChrome } from "../theintrodb/useSegmentChrome";
+import { chromeControl } from "./extensions/chromeControl";
 import { EpisodePicker } from "./EpisodePicker";
 import { PanelIcon, PlayerControls } from "./PlayerControls";
 import { CanvasVideoRenderer, FrameStream } from "./frameSink";
@@ -99,6 +100,11 @@ export function PlayerSurface({
   /** DOM node of the overlay layer — portal target for the settings panel. */
   const [overlayEl, setOverlayEl] = useState<HTMLElement | null>(null);
   const fullscreen = snapshot.fullscreen;
+  /** Idle-hide state driven by extensions via `ctx.ui.setChromeHidden`. */
+  const chromeHidden = useSyncExternalStore(
+    chromeControl.subscribe,
+    chromeControl.isHidden,
+  );
 
   // The picker is a switcher: one playable item (a film) has nothing to
   // choose — keep the rail empty instead of listing the file itself.
@@ -329,7 +335,7 @@ export function PlayerSurface({
 
   return (
     <div
-      className={`player-surface${fullscreen ? " player-surface-fullscreen" : ""}`}
+      className={`player-surface${fullscreen ? " player-surface-fullscreen" : ""}${chromeHidden ? " player-chrome-hidden" : ""}`}
       ref={surfaceRef}
     >
       <div className="player-stage">
