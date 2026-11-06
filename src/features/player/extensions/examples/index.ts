@@ -11,9 +11,13 @@
 
 import type { PlayerExtension } from "../types";
 import { autoHide } from "../autoHide";
+import { volumeProcessor } from "../volumeProcessor";
 import { ambientLightStub } from "./ambientLightStub";
 import { constantVolumeStub } from "./constantVolumeStub";
 
 export { ambientLightStub, constantVolumeStub };
 
-export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [autoHide];
+export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
+  autoHide,
+  volumeProcessor,
+];
