@@ -68,7 +68,7 @@ export type VolumeFilterState = {
 };
 
 export type FilterCommand = {
-  /** mpv `af` list operation (maps to the `af-add` / `af-remove` verbs). */
+  /** Operation of the mpv `af` command (filter-list verbs `add`/`remove`). */
   op: "add" | "remove";
   /** Filter entry: full labeled spec for `add`, `@label` ref for `remove`. */
   entry: string;
