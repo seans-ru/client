@@ -392,6 +392,44 @@
   font-size: var(--text-sm);
 }
 
+/* ------------------------------------------------------------- equalizer */
+
+.eq-bands {
+  display: flex;
+  justify-content: space-between;
+  gap: 2px;
+  padding: var(--space-2) 0 var(--space-1);
+}
+
+.eq-band {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.eq-band input[type="range"] {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 16px;
+  height: 96px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.eq-band-label,
+.eq-band-value {
+  font-size: 9px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+  user-select: none;
+}
+
 /* --------------------------------------------------------------- sidecar */
 
 .player-sidecar {
