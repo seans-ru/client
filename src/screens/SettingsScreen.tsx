@@ -9,6 +9,7 @@ import { Screen } from "../design/slots";
 import { useAuth } from "../features/auth";
 import { useLibrary } from "../features/library";
 import { UpdateSettingsSection } from "../features/updater";
+import { openNetworkPanel } from "../features/debug/NetworkPanel";
 import { formatBytes } from "../lib/format";
 import { ROUTES } from "../lib/routeResolver";
 
@@ -90,6 +91,18 @@ export function SettingsScreen() {
       <div className="panel">
         <strong>О приложении</strong>
         <p className="hint">Seans Client · версия обновления показана выше.</p>
+      </div>
+      <div className="panel">
+        <strong>Диагностика</strong>
+        <p className="hint">
+          Сетевые запросы приложения: метод, URL, статус, заголовки и тела
+          request/response. Открывается и хоткеем Ctrl+Shift+H.
+        </p>
+        <div className="state-actions">
+          <Button variant="secondary" onClick={openNetworkPanel}>
+            Сетевые запросы
+          </Button>
+        </div>
       </div>
     </Screen>
   );

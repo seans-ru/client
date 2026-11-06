@@ -99,7 +99,26 @@ export function PlayerSurface({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   /** DOM node of the overlay layer — portal target for the settings panel. */
   const [overlayEl, setOverlayEl] = useState<HTMLElement | null>(null);
+  /** Overlay transport strip; its height offsets the popup layer. */
+  const [transportAnchor, setTransportAnchor] = useState<HTMLDivElement | null>(null);
   const fullscreen = snapshot.fullscreen;
+
+  // Popups float just above the overlay transport; the progressive hint row
+  // changes its height, so measure it instead of hardcoding.
+  useEffect(() => {
+    if (!transportAnchor) return;
+    const root = surfaceRef.current;
+    const apply = () => {
+      root?.style.setProperty(
+        "--player-transport-h",
+        `${transportAnchor.offsetHeight}px`,
+      );
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(transportAnchor);
+    return () => observer.disconnect();
+  }, [transportAnchor]);
   /** Idle-hide state driven by extensions via `ctx.ui.setChromeHidden`. */
   const chromeHidden = useSyncExternalStore(
     chromeControl.subscribe,
@@ -387,47 +406,49 @@ export function PlayerSurface({
         </div>
 
         {statusNode ? null : (
-          <PlayerControls
-            snapshot={snapshot}
-            onSeek={seekTo}
-            onTogglePause={togglePause}
-            onSetSpeed={(speed) => {
-              void player.setSpeed(clampSpeed(speed));
-            }}
-            onSetVolume={(volume) => {
-              void player.setVolume(volume);
-            }}
-            onToggleMute={() => {
-              void player.setMute(!snapshot.mute);
-            }}
-            onSetAudioTrack={(id) => {
-              void player.setAudioTrack(id);
-              void player.refreshTracks();
-            }}
-            onSetSubtitleTrack={(id) => {
-              void player.setSubtitleTrack(id);
-              void player.refreshTracks();
-            }}
-            onToggleFullscreen={() => {
-              void player.setFullscreen(!snapshot.fullscreen);
-            }}
-            markers={chrome.markers}
-            chapters={chrome.markers}
-            onSeekChapter={seekTo}
-            mode={mode}
-            progress={progress}
-            limit={limit}
-            onBlockedSeek={onBlockedSeek}
-            audioOptions={audioOptions}
-            selectedAudioId={selectedAudioId}
-            onSelectPlaybackAudio={(trackId) => {
-              onSelectAudio?.(trackId);
-            }}
-            settingsOverlayEl={overlayEl}
-            sidecarAvailable={sidecarAvailable}
-            sidecarOpen={sidecarOpen}
-            onToggleSidecar={toggleSidecar}
-          />
+          <div className="player-transport-anchor" ref={setTransportAnchor}>
+            <PlayerControls
+              snapshot={snapshot}
+              onSeek={seekTo}
+              onTogglePause={togglePause}
+              onSetSpeed={(speed) => {
+                void player.setSpeed(clampSpeed(speed));
+              }}
+              onSetVolume={(volume) => {
+                void player.setVolume(volume);
+              }}
+              onToggleMute={() => {
+                void player.setMute(!snapshot.mute);
+              }}
+              onSetAudioTrack={(id) => {
+                void player.setAudioTrack(id);
+                void player.refreshTracks();
+              }}
+              onSetSubtitleTrack={(id) => {
+                void player.setSubtitleTrack(id);
+                void player.refreshTracks();
+              }}
+              onToggleFullscreen={() => {
+                void player.setFullscreen(!snapshot.fullscreen);
+              }}
+              markers={chrome.markers}
+              chapters={chrome.markers}
+              onSeekChapter={seekTo}
+              mode={mode}
+              progress={progress}
+              limit={limit}
+              onBlockedSeek={onBlockedSeek}
+              audioOptions={audioOptions}
+              selectedAudioId={selectedAudioId}
+              onSelectPlaybackAudio={(trackId) => {
+                onSelectAudio?.(trackId);
+              }}
+              settingsOverlayEl={overlayEl}
+              sidecarAvailable={sidecarAvailable}
+              sidecarOpen={sidecarOpen}
+              onToggleSidecar={toggleSidecar}
+            />
+          </div>
         )}
       </div>
 

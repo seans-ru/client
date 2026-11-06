@@ -12,6 +12,7 @@
  */
 
 import { getSessionToken, setSessionToken } from "./session";
+import { headerBagToRecord } from "../lib/httpLog";
 import { logHttpStart } from "../lib/httpTrace";
 
 const DEFAULT_API_BASE_URL = "https://api.seans.tedeshi.ru";
@@ -103,11 +104,9 @@ export type RequestOptions = {
   signal?: AbortSignal;
 };
 
-async function readErrorMessage(res: Response): Promise<string> {
+function parseErrorMessage(statusText: string, text: string): string {
+  if (text.length === 0) return statusText || "Ошибка API";
   try {
-    const text = await res.text();
-    if (text.length === 0) return res.statusText || "Ошибка API";
-    try {
       const data = JSON.parse(text) as {
         message?: unknown;
         error?: unknown;
@@ -135,10 +134,7 @@ async function readErrorMessage(res: Response): Promise<string> {
     } catch {
       // Non-JSON error body — fall through to raw text.
     }
-    return text;
-  } catch {
-    return res.statusText || "Ошибка API";
-  }
+  return text;
 }
 
 /**
@@ -163,36 +159,42 @@ export async function request<T>(
   let res: Response;
   const method = options.method ?? "GET";
   const fullUrl = apiUrl(path, options.query);
-  const traceDone = logHttpStart(method, fullUrl);
+  const bodyText =
+    options.body === undefined ? undefined : JSON.stringify(options.body);
+  const traceDone = logHttpStart(method, fullUrl, {
+    kind: "api",
+    reqHeaders: headers,
+    reqBody: bodyText ?? null,
+  });
   try {
     res = await apiFetch(fullUrl, {
       method,
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: bodyText,
       signal: options.signal,
     });
-    traceDone(res.status);
   } catch (cause) {
     traceDone(undefined, cause);
     const message = cause instanceof Error ? cause.message : "Сеть недоступна";
     throw new ApiError(0, message);
   }
 
+  const text = await res.text().catch(() => "");
+  traceDone(res.status, undefined, {
+    headers: headerBagToRecord(res.headers),
+    body: text,
+  });
+
   if (isUnauthorizedStatus(res.status)) {
     handleUnauthorized();
-    throw new ApiError(res.status, await readErrorMessage(res));
+    throw new ApiError(res.status, parseErrorMessage(res.statusText, text));
   }
 
   if (!res.ok) {
-    throw new ApiError(res.status, await readErrorMessage(res));
+    throw new ApiError(res.status, parseErrorMessage(res.statusText, text));
   }
 
-  if (res.status === 204) {
-    return undefined as T;
-  }
-
-  const text = await res.text();
-  if (text.length === 0) {
+  if (res.status === 204 || text.length === 0) {
     return undefined as T;
   }
   return JSON.parse(text) as T;

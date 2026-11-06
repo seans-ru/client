@@ -22,6 +22,7 @@ import { AuthProvider, useAuth } from "./features/auth";
 import type { AuthCallbackDetail } from "./features/auth";
 import { useDiscordJoin } from "./features/discord";
 import { UpdaterProvider } from "./features/updater";
+import { NetworkPanel } from "./features/debug/NetworkPanel";
 import { LoadingSlot } from "./design/slots";
 import { AppShell } from "./design/AppShell";
 
@@ -165,6 +166,7 @@ function Shell() {
   return (
     <div className="app">
       <Router />
+      <NetworkPanel />
     </div>
   );
 }

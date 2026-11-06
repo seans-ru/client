@@ -35,8 +35,6 @@ export type UsePlayerOpenerOptions = {
   playback: PlaybackResponse | null;
   /** `usePlayback.status` — hold gate + legacy fallback branch. */
   playbackStatus: "loading" | "ready" | "error";
-  /** `usePlayback.error` — message for the playback-API failure copy. */
-  playbackError: string | null;
   canPlay: boolean;
   /** Stream-derived mode from `usePlayback` (complete → VOD switch trigger). */
   mode: PlaybackMode;
@@ -69,7 +67,6 @@ export function usePlayerOpener({
   mediaResolve,
   playback,
   playbackStatus,
-  playbackError,
   canPlay,
   mode,
   limit,
@@ -199,10 +196,13 @@ export function usePlayerOpener({
                   "Файл ещё готовится — состояние загрузки появится чуть позже",
                 );
               } else {
-                player.fail(
-                  playbackError ??
-                    "Не удалось получить состояние загрузки (playback API)",
-                );
+                // The playback-API error is a different request's failure and
+                // used to mask what the URL fetch/open actually reported.
+                const message =
+                  cause instanceof Error && cause.message
+                    ? cause.message
+                    : "Не удалось получить ссылку на файл";
+                player.fail(message);
               }
               return;
             }

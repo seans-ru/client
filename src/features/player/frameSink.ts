@@ -11,6 +11,8 @@
  * Pixels are bottom-up rows (GL order) — the vertex shader flips Y.
  */
 
+import { logHttpStart } from "../../lib/httpTrace";
+
 const HEADER_BYTES = 24;
 
 export type FrameHandler = (frame: {
@@ -28,10 +30,19 @@ export class FrameStream {
     this.close();
     const controller = new AbortController();
     this.controller = controller;
-    const response = await fetch(url, {
-      cache: "no-store",
-      signal: controller.signal,
-    });
+    // Stream body is parsed as frames - record the connect only.
+    const traceDone = logHttpStart("GET", url, { kind: "stream" });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+    } catch (cause) {
+      traceDone(undefined, cause);
+      throw cause;
+    }
+    traceDone(response.status, undefined, { body: "<stream>" });
     if (!response.ok || !response.body) {
       throw new Error(`frame stream: HTTP ${response.status}`);
     }

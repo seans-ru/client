@@ -11,6 +11,7 @@
  */
 
 import { toNumber } from "../../api/parsing";
+import { headerBagToRecord } from "../../lib/httpLog";
 import { logHttpStart } from "../../lib/httpTrace";
 import {
   emptyBundle,
@@ -101,7 +102,8 @@ async function fetchAndNormalize(
   params: FetchSegmentsParams,
 ): Promise<TheIntroDbBundle> {
   const url = buildMediaUrl(params);
-  const traceDone = logHttpStart("GET", url);
+  const reqHeaders = { Accept: "application/json" };
+  const traceDone = logHttpStart("GET", url, { kind: "external", reqHeaders });
   let res: Response;
   try {
     const { isTauri } = await import("@tauri-apps/api/core");
@@ -109,29 +111,38 @@ async function fetchAndNormalize(
       const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http");
       res = (await tauriFetch(url, {
         method: "GET",
-        headers: { Accept: "application/json" },
+        headers: reqHeaders,
       })) as unknown as Response;
     } else {
       res = await fetch(url, {
         method: "GET",
-        headers: { Accept: "application/json" },
+        headers: reqHeaders,
       });
     }
-    traceDone(res.status);
   } catch (cause) {
-    traceDone(undefined, cause);
-    res = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-    });
-    traceDone(res.status);
+    // Record what the caller ends up with: the fallback response, or the
+    // failure of both attempts.
+    try {
+      res = await fetch(url, {
+        method: "GET",
+        headers: reqHeaders,
+      });
+    } catch (fallbackCause) {
+      traceDone(undefined, cause);
+      throw fallbackCause;
+    }
   }
+  const text = await res.text().catch(() => "");
+  traceDone(res.status, undefined, {
+    headers: headerBagToRecord(res.headers),
+    body: text,
+  });
   if (!res.ok) {
     // 404 carries a machine-readable `code` (no_submissions | media_not_found |
     // episode_not_found) — surface it so silent-off is diagnosable.
     let code = `HTTP ${res.status}`;
     try {
-      const body = JSON.parse(await res.text()) as { code?: unknown; error?: unknown };
+      const body = JSON.parse(text) as { code?: unknown; error?: unknown };
       if (typeof body.code === "string" && body.code.length > 0) code = body.code;
       else if (typeof body.error === "string" && body.error.length > 0) code = body.error;
     } catch {
@@ -139,7 +150,6 @@ async function fetchAndNormalize(
     }
     throw new Error(`TheIntroDB ${code}`);
   }
-  const text = await res.text();
   if (text.length === 0) return emptyBundle();
   return normalizeTheIntroDbBundle(JSON.parse(text));
 }

@@ -25,6 +25,9 @@
   display: flex;
   flex-direction: column;
   background: transparent;
+  /* Overlay transport height; refined from JS (the progressive hint row
+     changes it). Popups float just above the transport strip. */
+  --player-transport-h: 78px;
 }
 
 .player-video-area {
@@ -36,9 +39,14 @@
 }
 
 /* Idle-hide chrome (docs/compose/spec/clean-screen.md): driven by
-   ctx.ui.setChromeHidden -> class on the surface root. */
+   ctx.ui.setChromeHidden -> class on the surface root. Fade via opacity;
+   visibility flips after the fade so focus never sits on hidden buttons. */
 .player-chrome-hidden .player-transport {
+  opacity: 0;
   visibility: hidden;
+  transition:
+    opacity 0.25s ease-in-out,
+    visibility 0s linear 0.25s;
 }
 
 .player-chrome-hidden .player-video-area {
@@ -77,15 +85,28 @@
 
 /* ------------------------------------------------------------- transport */
 
+/* Overlay strip at the bottom of the video area (was a flex row below it):
+   hiding it leaves no empty band and the video never resizes. */
+.player-transport-anchor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4; /* above the frame canvas, below the popup layer */
+}
+
 .player-transport {
-  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-2) var(--space-4) var(--space-3);
-  background: var(--bg-elevated);
-  border-top: 1px solid var(--border);
+  background: transparent;
   color: var(--ink);
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 0.25s ease-in-out,
+    visibility 0s;
 }
 
 .player-transport-hint {
@@ -232,7 +253,8 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  /* Just above the overlay transport (measured in JS). */
+  bottom: var(--player-transport-h, 79px);
   display: flex;
   flex-direction: column;
   align-items: flex-end;

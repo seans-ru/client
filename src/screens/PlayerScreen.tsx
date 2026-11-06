@@ -118,7 +118,6 @@ export function PlayerScreen({
     mediaResolve,
     playback,
     playbackStatus: playbackState.status,
-    playbackError: playbackState.error,
     canPlay,
     mode,
     limit,

@@ -4,7 +4,7 @@
  * is shared with the episode picker.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchLibrary } from "../../api/endpoints";
 import type { ApiId } from "../../api/types";
 
@@ -96,22 +96,40 @@ export function useMediaLookup(
     season: number | null;
     episode: number | null;
   }>({ season: null, episode: null });
+  /** Clear ids only when the *file* changes — not when intro fallback lands. */
+  const prevFileRef = useRef<string | null>(null);
+  /** True once library (or fallback) resolved this file — skip re-lookup. */
+  const resolvedFileRef = useRef<string | null>(null);
 
   // Resolve media id + season/episode. TheIntroDB context may already have
   // the media id; always resolve season/episode from the library file row.
+  // Re-runs when `fallback` arrives: keep the already-resolved mediaId so
+  // usePlayback does not see null → id and refetch /playback.
   useEffect(() => {
     let cancelled = false;
-    setMediaId(null);
+    if (prevFileRef.current !== fileId) {
+      prevFileRef.current = fileId;
+      resolvedFileRef.current = null;
+      setMediaId(null);
+      setEpisodeCtx({ season: null, episode: null });
+    }
+    // Library already answered for this file — only a missing row may use
+    // the intro fallback; no need to hit /library again.
+    if (resolvedFileRef.current === fileId) {
+      return;
+    }
     setMediaResolve("pending");
     void (async () => {
       try {
         const ctx = await resolveFileMedia(fileId);
         if (cancelled) return;
         if (ctx) {
+          resolvedFileRef.current = fileId;
           setMediaId(ctx.mediaId);
           setEpisodeCtx({ season: ctx.season, episode: ctx.episode });
           setMediaResolve("found");
         } else if (fallback?.mediaId != null) {
+          resolvedFileRef.current = fileId;
           setMediaId(fallback.mediaId);
           setEpisodeCtx({
             season: fallback.season,
@@ -119,11 +137,14 @@ export function useMediaLookup(
           });
           setMediaResolve("found");
         } else {
+          // Library miss — may still be fixed when intro context arrives
+          // (do not mark resolved; effect re-runs on fallback change).
           setMediaResolve("missing");
         }
       } catch {
         if (cancelled) return;
         if (fallback?.mediaId != null) {
+          resolvedFileRef.current = fileId;
           setMediaId(fallback.mediaId);
           setMediaResolve("found");
         } else {

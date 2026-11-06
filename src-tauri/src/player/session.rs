@@ -574,6 +574,17 @@ pub fn open(
     let _ = unsafe { api.set_option_string(handle, "osc", "no") };
     let _ = unsafe { api.set_option_string(handle, "input-default-bindings", "no") };
     let _ = unsafe { api.set_option_string(handle, "input-cursor", "no") };
+    // Slow object storage: buckets.ru roundtrips of several seconds are normal
+    // (see the s3-check timeout note in the backend), so give the HTTP layer
+    // headroom instead of ffmpeg's few-second default and allow reconnects.
+    let _ = unsafe { api.set_option_string(handle, "network-timeout", "60") };
+    let _ = unsafe {
+        api.set_option_string(
+            handle,
+            "demuxer-lavf-o",
+            "timeout=60000000,reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
+        )
+    };
     // External (non-embedded) audio tracks: ac3/m4a sidecar files.
     if !external_audio_urls.is_empty() {
         let joined = external_audio_urls
@@ -613,13 +624,17 @@ pub fn open(
     // Load the presigned media URL (any container/codec libmpv supports).
     let load_error =
         unsafe { api.command(handle, &["loadfile", url.as_str(), "replace"]) }.err();
-    if load_error.is_some() {
-        snapshot.error = Some(OPEN_FAILED_ERROR.to_string());
+    let load_error_text = load_error.map(|detail| {
+        eprintln!("[player] loadfile failed: {detail}");
+        format!("{OPEN_FAILED_ERROR}: {detail}")
+    });
+    if let Some(text) = &load_error_text {
+        snapshot.error = Some(text.clone());
         snapshot.pause = true;
     }
     unsafe { refresh_snapshot(&api, handle, &mut snapshot) };
-    if load_error.is_some() {
-        snapshot.error = Some(OPEN_FAILED_ERROR.to_string());
+    if let Some(text) = load_error_text {
+        snapshot.error = Some(text);
     }
     emit_state(&app, &snapshot);
 
@@ -1031,17 +1046,21 @@ fn event_loop(
             match event_id {
                 MPV_EVENT_SHUTDOWN => break,
                 MPV_EVENT_END_FILE => {
-                    let reason = unsafe {
+                    let (reason, code) = unsafe {
                         let data = (*event).data as *const ffi::MpvEventEndFile;
                         if data.is_null() {
-                            0
+                            (0, 0)
                         } else {
-                            (*data).reason
+                            ((*data).reason, (*data).error)
                         }
                     };
                     if let Ok(mut snap) = snapshot.lock() {
                         if reason == MPV_END_FILE_REASON_ERROR {
-                            snap.error = Some(OPEN_FAILED_ERROR.to_string());
+                            // Keep the real mpv reason (timeout / HTTP error /
+                            // unsupported...) instead of one opaque string.
+                            let detail = api.error_text(code);
+                            eprintln!("[player] open failed: code={code} {detail}");
+                            snap.error = Some(format!("{OPEN_FAILED_ERROR}: {detail}"));
                             snap.pause = true;
                             snap.file_loaded = false;
                             emit_state(&app, &snap);
