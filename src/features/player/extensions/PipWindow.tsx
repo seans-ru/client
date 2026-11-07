@@ -125,11 +125,11 @@ export function PipWindow() {
   };
   const displayedPosition = scrub ?? state.position;
   const percent = state.duration > 0 ? Math.max(0, Math.min(100, displayedPosition / state.duration * 100)) : 0;
-  return <main className="pip-window">
-    <canvas ref={canvas} className="pip-video" aria-label="Видео в отдельном окне"
-      onPointerDown={event => {
-        if (event.button === 0) void getCurrentWebviewWindow().startDragging().catch(() => setError("Не удалось переместить окно."));
-      }} />
+  return <main className="pip-window" onPointerDown={event => {
+    if (event.button !== 0 || (event.target as HTMLElement).closest("button, input, .pip-controls, .pip-status, .pip-resize")) return;
+    void getCurrentWebviewWindow().startDragging().catch(() => setError("Не удалось переместить окно."));
+  }}>
+    <canvas ref={canvas} className="pip-video" aria-label="Видео в отдельном окне" />
     {RESIZE_EDGES.map(direction => <div key={direction} className={`pip-resize pip-resize-${direction}`} aria-hidden="true"
       onPointerDown={event => {
         if (event.button !== 0) return;

@@ -63,6 +63,10 @@
   background: #000;
 }
 
+.player-pip-suspended .player-video-canvas { visibility: hidden; }
+.player-pip-suspended .player-overlay-layer { display: none; }
+.player-pip-suspended .player-video-area { cursor: default; }
+
 .player-video-area-status {
   cursor: default;
   display: flex;

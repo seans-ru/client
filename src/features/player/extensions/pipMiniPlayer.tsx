@@ -6,6 +6,7 @@ import { playerFramesUrl } from "../playerApi";
 import type { PlayerExtension } from "./types";
 import { PIP_COMMAND, PIP_ERROR, PIP_INIT, PIP_LABEL, PIP_LAYOUT, PIP_REQUEST, PIP_STATE, pipState } from "./pipProtocol";
 import { parsePipFrameLayout } from "./pipVideoLayout";
+import { pipPresentation } from "./pipPresentation";
 
 type Status = { open: boolean; pending: boolean; error: string | null };
 function Toggle({ subscribe, getStatus, toggle }: {
@@ -53,6 +54,7 @@ export const pipMiniPlayer: PlayerExtension = {
       if (pip && status.open) void pip.close().catch(fail);
       if (!pip && active) update({ pending: false });
     };
+    const stopReturn = pipPresentation.registerReturn(close);
     const keep = (stop: () => void) => { if (active) stops.push(stop); else stop(); };
     const ready = isTauri() ? Promise.all([
       listen(PIP_REQUEST, async () => {
@@ -63,6 +65,7 @@ export const pipMiniPlayer: PlayerExtension = {
           if (active && pip && requestGeneration === generation) {
             layoutKey = JSON.stringify(layout);
             await emitTo(PIP_LABEL, PIP_INIT, { framesUrl, layout, state: pipState(ctx.getSnapshot()) });
+            if (active && pip && requestGeneration === generation) pipPresentation.setActive(true);
           }
         } catch (error) { fail(error); }
       }, { target: { kind: "WebviewWindow", label: "main" } }).then(keep),
@@ -107,8 +110,13 @@ export const pipMiniPlayer: PlayerExtension = {
           if (!active || opening !== generation) void created.close().catch(fail);
           else update({ open: true, pending: false });
         });
-        await created.once("tauri://error", event => { pip = null; update({ open: false }); fail(event.payload); });
-        await created.once("tauri://destroyed", () => { if (pip === created) pip = null; if (active) update({ open: false, pending: false }); });
+        await created.once("tauri://error", event => { pip = null; if (active) pipPresentation.setActive(false); update({ open: false }); fail(event.payload); });
+        await created.once("tauri://destroyed", () => {
+          if (pip === created) {
+            pip = null;
+            if (active) { pipPresentation.setActive(false); update({ open: false, pending: false }); }
+          }
+        });
       } catch (error) { pip = null; fail(error); }
     };
     const stopSnapshot = ctx.onSnapshot(snapshot => {
@@ -134,6 +142,8 @@ export const pipMiniPlayer: PlayerExtension = {
     />);
     return () => {
       active = false;
+      pipPresentation.setActive(false);
+      stopReturn();
       clearInterval(layoutTimer);
       close();
       stopSnapshot(); stopClose(); stopUi();

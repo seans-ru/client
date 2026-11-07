@@ -28,6 +28,7 @@ vi.mock("@tauri-apps/api/webviewWindow", () => ({
 }));
 vi.mock("../src/features/player/playerApi", () => ({ playerFramesUrl: async () => "http://127.0.0.1:1234/frames" }));
 import { pipMiniPlayer } from "../src/features/player/extensions/pipMiniPlayer";
+import { pipPresentation } from "../src/features/player/extensions/pipPresentation";
 
 function setup() {
   let render: () => unknown = () => null;
@@ -48,7 +49,7 @@ function setup() {
     toggle: () => (render() as ReactElement<{ toggle: () => void }>).props.toggle(),
   };
 }
-beforeEach(() => { mock.events.clear(); mock.windows.length = 0; mock.emit.mockClear(); });
+beforeEach(() => { mock.events.clear(); mock.windows.length = 0; mock.emit.mockClear(); pipPresentation.setActive(false); });
 describe("системное окно PiP", () => {
   it("открывает единственное независимое topmost-окно", async () => {
     const fixture = setup();
@@ -92,6 +93,41 @@ describe("системное окно PiP", () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(mock.windows).toHaveLength(0);
     fixture.dispose();
+  });
+  it("передаёт изображение в PiP после подключения и возвращает после закрытия", async () => {
+    const fixture = setup(); fixture.toggle();
+    await vi.waitFor(() => expect(mock.windows[0]?.events.has("tauri://destroyed")).toBe(true));
+    expect(pipPresentation.isActive()).toBe(false);
+    mock.windows[0].events.get("tauri://created")!({ payload: null });
+    await mock.events.get(PIP_REQUEST)!({ payload: null });
+    expect(pipPresentation.isActive()).toBe(true);
+    mock.windows[0].events.get("tauri://destroyed")!({ payload: null });
+    expect(pipPresentation.isActive()).toBe(false);
+    expect(fixture.transport.togglePause).not.toHaveBeenCalled();
+    fixture.dispose();
+  });
+  it("возвращает изображение по кнопке основного окна только после закрытия PiP", async () => {
+    const fixture = setup(); fixture.toggle();
+    await vi.waitFor(() => expect(mock.windows[0]?.events.has("tauri://destroyed")).toBe(true));
+    mock.windows[0].events.get("tauri://created")!({ payload: null });
+    await mock.events.get(PIP_REQUEST)!({ payload: null });
+    pipPresentation.returnToMain();
+    expect(mock.windows[0].close).toHaveBeenCalledTimes(1);
+    expect(pipPresentation.isActive()).toBe(true);
+    mock.windows[0].events.get("tauri://destroyed")!({ payload: null });
+    expect(pipPresentation.isActive()).toBe(false);
+    fixture.dispose();
+  });
+  it("освобождает основной видеовывод при завершении сессии", async () => {
+    const fixture = setup(); fixture.toggle();
+    await vi.waitFor(() => expect(mock.windows[0]?.events.has("tauri://created")).toBe(true));
+    mock.windows[0].events.get("tauri://created")!({ payload: null });
+    await mock.events.get(PIP_REQUEST)!({ payload: null });
+    fixture.dispose();
+    expect(pipPresentation.isActive()).toBe(false);
+    expect(mock.windows[0].close).toHaveBeenCalledTimes(1);
+    pipPresentation.returnToMain();
+    expect(mock.windows[0].close).toHaveBeenCalledTimes(1);
   });
   it("закрывает созданное окно, если источник закрылся до события created", async () => {
     const fixture = setup(); fixture.toggle();
