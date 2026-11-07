@@ -9,9 +9,9 @@
  * Seeks past the seekable prefix are not sent to the transport.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
 import { SeekMarkers } from "../theintrodb/SegmentChrome";
 import type { SegmentMarker } from "../theintrodb/types";
 import type { PlaybackAudioOption } from "./usePlayback";
@@ -31,7 +31,11 @@ import {
   formatSeekableUntil,
   seekableRailRatio,
 } from "./progressiveHelpers";
-import { PlayerSlot } from "./extensions/slots";
+import { PlayerSlot, useSlotEntries } from "./extensions/slots";
+import type { SlotEntry } from "./extensions/registry";
+import { useChromeSchema } from "../playerSettings/chromeStore";
+import { functionEntryId, getChromeEntry, resolveLayout } from "../playerSettings/layoutModel";
+import type { ChromeEntry } from "../playerSettings/layoutModel";
 
 export type PlayerControlsProps = {
   snapshot: PlayerSnapshot;
@@ -256,6 +260,39 @@ export function PanelIcon() {
 
 /* ---------------------------------------------------------- settings menu */
 
+/**
+ * Ordered settings-menu content (issue #25 layout): built-in button rows
+ * interleaved with extension rows per the saved schema. Extension rows with
+ * no layout entry (examples) keep appending at the end.
+ */
+function renderMenuLayout(
+  menuEntries: readonly ChromeEntry[],
+  fnEntries: ReadonlyArray<SlotEntry>,
+  buttonRow: (entryId: string) => ReactNode,
+): ReactNode {
+  const consumed = new Set<SlotEntry>();
+  const rows: ReactNode[] = [];
+  for (const entry of menuEntries) {
+    if (entry.kind === "button") {
+      rows.push(<Fragment key={entry.id}>{buttonRow(entry.id)}</Fragment>);
+      continue;
+    }
+    const match = fnEntries.find(
+      (item) => item.extId === entry.extId && !consumed.has(item),
+    );
+    if (match) {
+      consumed.add(match);
+      rows.push(<Fragment key={entry.id}>{match.render()}</Fragment>);
+    }
+  }
+  for (const entry of fnEntries) {
+    if (consumed.has(entry)) continue;
+    if (functionEntryId(entry.extId) != null) continue;
+    rows.push(<Fragment key={`ext:${entry.extId}`}>{entry.render()}</Fragment>);
+  }
+  return rows;
+}
+
 function SettingsMenu({
   snapshot,
   onSetSpeed,
@@ -271,6 +308,7 @@ function SettingsMenu({
   chapters,
   onSeekChapter,
   overlayEl,
+  buttonRow,
 }: {
   snapshot: PlayerSnapshot;
   onSetSpeed: (speed: number) => void;
@@ -287,10 +325,15 @@ function SettingsMenu({
   onSeekChapter?: (seconds: number) => void;
   /** Overlay layer node: the panel must live there to stay visible (mpv HWND). */
   overlayEl?: HTMLElement | null;
+  /** Renders a built-in button as a menu row (layout: button dropped into the menu). */
+  buttonRow: (entryId: string) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const schema = useChromeSchema();
+  const menuEntries = resolveLayout(schema).slots["settings.menu"];
+  const fnEntries = useSlotEntries("settings.menu");
 
   useEffect(() => {
     if (!open) return;
@@ -430,7 +473,7 @@ function SettingsMenu({
             </section>
           ) : null}
 
-          <PlayerSlot name="settings.menu" />
+          {renderMenuLayout(menuEntries, fnEntries, buttonRow)}
     </div>
   );
 
@@ -493,6 +536,11 @@ export function PlayerControls({
   const selectedAudio = audioTracks.find((t) => t.selected)?.id ?? 0;
   const selectedSub = subTracks.find((t) => t.selected)?.id ?? 0;
 
+  // Chrome layout (issue #25): the transport row and the settings menu follow
+  // the saved button layout; the default schema reproduces the stock order.
+  const schema = useChromeSchema();
+  const layout = resolveLayout(schema);
+
   const seekablePct =
     mode === "vod"
       ? 100
@@ -507,6 +555,174 @@ export function PlayerControls({
 
   const progressLabels = mode === "vod" ? null : formatProgressLabels(progress ?? { percentDownloaded: 0, percentSeekable: 0 });
   const seekableUntil = mode === "vod" ? null : formatSeekableUntil(limit ?? { maxSeekableSec: null, seekableRatio: null, durationSec: null });
+
+  const playPauseButton = (
+    <button
+      type="button"
+      className="player-icon-btn player-icon-btn-primary"
+      onClick={onTogglePause}
+      aria-label={snapshot.pause ? "Воспроизвести" : "Пауза"}
+      title={snapshot.pause ? "Воспроизвести (Пробел)" : "Пауза (Пробел)"}
+    >
+      {snapshot.pause ? <PlayIcon /> : <PauseIcon />}
+    </button>
+  );
+
+  const timeDisplay = (
+    <span className="player-time">
+      {formatTime(snapshot.position)}
+      <span className="player-time-muted"> / {formatTime(duration)}</span>
+    </span>
+  );
+
+  const volumeControls = (
+    <>
+      <button
+        type="button"
+        className="player-icon-btn"
+        onClick={onToggleMute}
+        aria-label={snapshot.mute ? "Включить звук" : "Выключить звук"}
+        title="Звук (M)"
+      >
+        <VolumeIcon muted={snapshot.mute} />
+      </button>
+      <input
+        className="player-volume"
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={Math.round(snapshot.mute ? 0 : snapshot.volume)}
+        onChange={(event) => onSetVolume(Number(event.target.value))}
+        aria-label="Громкость"
+        title="Громкость (↑ / ↓)"
+      />
+    </>
+  );
+
+  const settingsMenuButton = (
+    <SettingsMenu
+      snapshot={snapshot}
+      onSetSpeed={onSetSpeed}
+      audioTracks={audioTracks}
+      selectedAudio={selectedAudio}
+      onSetAudioTrack={onSetAudioTrack}
+      subTracks={subTracks}
+      selectedSub={selectedSub}
+      onSetSubtitleTrack={onSetSubtitleTrack}
+      audioOptions={audioOptions}
+      selectedAudioId={selectedAudioId}
+      onSelectPlaybackAudio={onSelectPlaybackAudio}
+      chapters={chapters}
+      onSeekChapter={onSeekChapter}
+      overlayEl={settingsOverlayEl}
+      buttonRow={menuButtonRow}
+    />
+  );
+
+  const sidecarButton =
+    sidecarAvailable && onToggleSidecar ? (
+      <button
+        type="button"
+        className={`player-icon-btn${sidecarOpen ? " player-icon-btn-active" : ""}`}
+        onClick={onToggleSidecar}
+        aria-label={sidecarOpen ? "Скрыть боковую панель" : "Показать боковую панель"}
+        aria-pressed={sidecarOpen}
+        title={sidecarOpen ? "Скрыть панель" : "Показать панель"}
+      >
+        <PanelIcon />
+      </button>
+    ) : null;
+
+  const fullscreenButton = (
+    <button
+      type="button"
+      className="player-icon-btn"
+      onClick={onToggleFullscreen}
+      aria-label={snapshot.fullscreen ? "Выйти из полноэкранного режима" : "Полный экран"}
+      title="Полный экран (F)"
+    >
+      <FullscreenIcon active={snapshot.fullscreen} />
+    </button>
+  );
+
+  const clusterNodes: Record<string, ReactNode> = {
+    "btn.playPause": playPauseButton,
+    "btn.time": timeDisplay,
+    "btn.volume": volumeControls,
+    "btn.settings": settingsMenuButton,
+    "btn.sidecar": sidecarButton,
+    "btn.fullscreen": fullscreenButton,
+  };
+
+  /** Settings-menu rows for built-in buttons dragged into the menu. */
+  function menuButtonRow(entryId: string): ReactNode {
+    const label = getChromeEntry(entryId)?.label ?? entryId;
+    switch (entryId) {
+      case "btn.playPause":
+        return (
+          <button
+            type="button"
+            role="menuitem"
+            className="player-menu-item"
+            onClick={onTogglePause}
+          >
+            {snapshot.pause ? "Воспроизвести" : "Пауза"}
+          </button>
+        );
+      case "btn.time":
+        return (
+          <div className="player-menu-item" role="presentation">
+            <span className="player-menu-item-label">{label}</span>
+            <span className="player-menu-item-meta">
+              {formatTime(snapshot.position)} / {formatTime(duration)}
+            </span>
+          </div>
+        );
+      case "btn.volume":
+        return (
+          <button
+            type="button"
+            role="menuitem"
+            className="player-menu-item"
+            onClick={onToggleMute}
+          >
+            {snapshot.mute ? "Включить звук" : "Выключить звук"}
+          </button>
+        );
+      case "btn.sidecar":
+        return onToggleSidecar ? (
+          <button
+            type="button"
+            role="menuitem"
+            className="player-menu-item"
+            onClick={onToggleSidecar}
+          >
+            {sidecarOpen ? "Скрыть панель" : "Показать панель"}
+          </button>
+        ) : null;
+      case "btn.fullscreen":
+        return (
+          <button
+            type="button"
+            role="menuitem"
+            className="player-menu-item"
+            onClick={onToggleFullscreen}
+          >
+            {snapshot.fullscreen ? "Выйти из полного экрана" : "Полный экран"}
+          </button>
+        );
+      case "btn.settings":
+        // The gear is the menu itself — an inert row when dropped inside.
+        return (
+          <div className="player-menu-item" role="presentation">
+            <span className="player-menu-item-label">{label}</span>
+          </div>
+        );
+      default:
+        return null;
+    }
+  }
 
   return (
     <div className="player-transport" role="group" aria-label="Управление воспроизведением">
@@ -550,87 +766,19 @@ export function PlayerControls({
       </div>
 
       <div className="player-transport-row">
-        <button
-          type="button"
-          className="player-icon-btn player-icon-btn-primary"
-          onClick={onTogglePause}
-          aria-label={snapshot.pause ? "Воспроизвести" : "Пауза"}
-          title={snapshot.pause ? "Воспроизвести (Пробел)" : "Пауза (Пробел)"}
-        >
-          {snapshot.pause ? <PlayIcon /> : <PauseIcon />}
-        </button>
-
-        <span className="player-time">
-          {formatTime(snapshot.position)}
-          <span className="player-time-muted"> / {formatTime(duration)}</span>
-        </span>
+        {layout.slots["controls.primary"].map((entry: ChromeEntry) => (
+          <Fragment key={entry.id}>{clusterNodes[entry.id] ?? null}</Fragment>
+        ))}
 
         <PlayerSlot name="controls.primary" />
 
         <div className="player-transport-spacer" />
 
-        <button
-          type="button"
-          className="player-icon-btn"
-          onClick={onToggleMute}
-          aria-label={snapshot.mute ? "Включить звук" : "Выключить звук"}
-          title="Звук (M)"
-        >
-          <VolumeIcon muted={snapshot.mute} />
-        </button>
-        <input
-          className="player-volume"
-          type="range"
-          min={0}
-          max={100}
-          step={1}
-          value={Math.round(snapshot.mute ? 0 : snapshot.volume)}
-          onChange={(event) => onSetVolume(Number(event.target.value))}
-          aria-label="Громкость"
-          title="Громкость (↑ / ↓)"
-        />
+        {layout.slots["controls.secondary"].map((entry: ChromeEntry) => (
+          <Fragment key={entry.id}>{clusterNodes[entry.id] ?? null}</Fragment>
+        ))}
 
         <PlayerSlot name="controls.secondary" />
-
-        <SettingsMenu
-          snapshot={snapshot}
-          onSetSpeed={onSetSpeed}
-          audioTracks={audioTracks}
-          selectedAudio={selectedAudio}
-          onSetAudioTrack={onSetAudioTrack}
-          subTracks={subTracks}
-          selectedSub={selectedSub}
-          onSetSubtitleTrack={onSetSubtitleTrack}
-          audioOptions={audioOptions}
-          selectedAudioId={selectedAudioId}
-          onSelectPlaybackAudio={onSelectPlaybackAudio}
-          chapters={chapters}
-          onSeekChapter={onSeekChapter}
-          overlayEl={settingsOverlayEl}
-        />
-
-        {sidecarAvailable && onToggleSidecar ? (
-          <button
-            type="button"
-            className={`player-icon-btn${sidecarOpen ? " player-icon-btn-active" : ""}`}
-            onClick={onToggleSidecar}
-            aria-label={sidecarOpen ? "Скрыть боковую панель" : "Показать боковую панель"}
-            aria-pressed={sidecarOpen}
-            title={sidecarOpen ? "Скрыть панель" : "Показать панель"}
-          >
-            <PanelIcon />
-          </button>
-        ) : null}
-
-        <button
-          type="button"
-          className="player-icon-btn"
-          onClick={onToggleFullscreen}
-          aria-label={snapshot.fullscreen ? "Выйти из полноэкранного режима" : "Полный экран"}
-          title="Полный экран (F)"
-        >
-          <FullscreenIcon active={snapshot.fullscreen} />
-        </button>
       </div>
     </div>
   );

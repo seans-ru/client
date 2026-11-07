@@ -63,7 +63,7 @@ export function startActivityListener(
   };
 }
 
-type AutoHideSettings = {
+export type AutoHideSettings = {
   subscribe(cb: () => void): Unsubscribe;
   getDelaySec(): number;
   getNeverHide(): boolean;
@@ -71,15 +71,22 @@ type AutoHideSettings = {
   setNeverHide(next: boolean): void;
 };
 
+/** One settings store per storage instance — player row and settings section share state. */
+const settingsByStorage = new WeakMap<ExtensionStorage, AutoHideSettings>();
+
 /** Shared settings state for the menu row and the idle timer. */
-function createSettings(storage: ExtensionStorage): AutoHideSettings {
+export function createAutoHideSettings(
+  storage: ExtensionStorage,
+): AutoHideSettings {
+  const cached = settingsByStorage.get(storage);
+  if (cached) return cached;
   let delaySec = clampDelaySec(storage.get(DELAY_KEY, DEFAULT_DELAY_SEC));
   let neverHide = Boolean(storage.get(NEVER_HIDE_KEY, false));
   const listeners = new Set<() => void>();
   const notify = () => {
     for (const listener of [...listeners]) listener();
   };
-  return {
+  const settings: AutoHideSettings = {
     subscribe(cb) {
       listeners.add(cb);
       return () => {
@@ -99,9 +106,12 @@ function createSettings(storage: ExtensionStorage): AutoHideSettings {
       notify();
     },
   };
+  settingsByStorage.set(storage, settings);
+  return settings;
 }
 
-function AutoHideRow({
+/** Settings row for auto-hide (player menu + settings screen). */
+export function AutoHideRow({
   settings,
 }: {
   settings: AutoHideSettings;
@@ -109,9 +119,11 @@ function AutoHideRow({
   const delaySec = useSyncExternalStore(
     settings.subscribe,
     settings.getDelaySec,
+    settings.getDelaySec,
   );
   const neverHide = useSyncExternalStore(
     settings.subscribe,
+    settings.getNeverHide,
     settings.getNeverHide,
   );
   return (
@@ -150,7 +162,7 @@ export const autoHide: PlayerExtension = {
   id: "autohide",
   name: "Автоскрытие контролов",
   setup(ctx): Unsubscribe {
-    const settings = createSettings(ctx.storage);
+    const settings = createAutoHideSettings(ctx.storage);
     let timer: ReturnType<typeof setTimeout> | null = null;
     let hidden = false;
 

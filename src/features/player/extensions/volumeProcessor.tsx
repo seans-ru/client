@@ -101,16 +101,21 @@ export type VolumeSettings = {
   setNightMode(mode: NightMode): void;
 };
 
+/** One settings store per storage instance — player row and settings section share state. */
+const settingsByStorage = new WeakMap<ExtensionStorage, VolumeSettings>();
+
 export function createVolumeSettings(
   storage: ExtensionStorage,
 ): VolumeSettings {
+  const cached = settingsByStorage.get(storage);
+  if (cached) return cached;
   let normalization = Boolean(storage.get(NORMALIZATION_KEY, false));
   let nightMode = parseNightMode(storage.get(NIGHT_MODE_KEY, "off"));
   const listeners = new Set<() => void>();
   const notify = () => {
     for (const listener of [...listeners]) listener();
   };
-  return {
+  const settings: VolumeSettings = {
     subscribe(cb) {
       listeners.add(cb);
       return () => {
@@ -130,6 +135,8 @@ export function createVolumeSettings(
       notify();
     },
   };
+  settingsByStorage.set(storage, settings);
+  return settings;
 }
 
 export type VolumeController = {
@@ -182,7 +189,8 @@ const NIGHT_MODE_LABELS: Record<NightMode, string> = {
   strong: "Сильный",
 };
 
-function VolumeProcessorRow({
+/** Settings section for volume processing (player menu + settings screen). */
+export function VolumeProcessorRow({
   settings,
 }: {
   settings: VolumeSettings;
@@ -190,9 +198,11 @@ function VolumeProcessorRow({
   const normalization = useSyncExternalStore(
     settings.subscribe,
     settings.getNormalization,
+    settings.getNormalization,
   );
   const nightMode = useSyncExternalStore(
     settings.subscribe,
+    settings.getNightMode,
     settings.getNightMode,
   );
   return (

@@ -13,6 +13,8 @@ import type { PlayerExtension } from "../types";
 import { autoHide } from "../autoHide";
 import { equalizer } from "../eq";
 import { volumeProcessor } from "../volumeProcessor";
+import { statsOverlay } from "../statsOverlay";
+import { subtitleStyle } from "../subtitleStyle";
 import { ambientLightStub } from "./ambientLightStub";
 import { constantVolumeStub } from "./constantVolumeStub";
 
@@ -22,4 +24,6 @@ export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
   autoHide,
   volumeProcessor,
   equalizer,
+  subtitleStyle,
+  statsOverlay,
 ];

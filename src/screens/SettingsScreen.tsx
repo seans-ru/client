@@ -1,6 +1,7 @@
 /**
- * Settings (ui-ux-redesign): Account first (quota meter + logout), then
- * updates/version and playback notes. Dark-only — no theme cycler.
+ * Settings (ui-ux-redesign): Account first (quota meter + logout), then the
+ * player chrome section («Оформление плеера»), updates/version and playback
+ * notes. Dark-only — no theme cycler.
  */
 
 import { useMemo } from "react";
@@ -10,6 +11,7 @@ import { useAuth } from "../features/auth";
 import { useLibrary } from "../features/library";
 import { UpdateSettingsSection } from "../features/updater";
 import { openNetworkPanel } from "../features/debug/NetworkPanel";
+import { PlayerSettingsSection } from "../features/playerSettings";
 import { formatBytes } from "../lib/format";
 import { ROUTES } from "../lib/routeResolver";
 
@@ -73,10 +75,7 @@ export function SettingsScreen() {
         )}
       </section>
 
-      <div className="panel">
-        <strong>Оформление</strong>
-        <p className="hint">Тёмная тема (home theater). Светлая тема отключена.</p>
-      </div>
+      <PlayerSettingsSection />
 
       <UpdateSettingsSection />
 

@@ -20,6 +20,8 @@ import {
 import { createExtensionStorage } from "./extensions/storage";
 import type { ExtensionTransport, OpenInfo } from "./extensions/types";
 import { PLAYER_EXTENSIONS } from "./extensions/examples";
+import { chromeStore } from "../playerSettings/chromeStore";
+import { enabledExtensionIds } from "../playerSettings/featureCatalog";
 
 export function usePlayerExtensions(args: {
   /** Same guarded transport the UI uses (identity may change per render). */
@@ -53,21 +55,42 @@ export function usePlayerExtensions(args: {
   // state initializer): React StrictMode runs setup→cleanup→setup and would
   // otherwise keep a disposed runtime while its initializer never re-runs.
   // The effect cleanup pairs every setup with a dispose, same as useRoomSocket.
+  // Disabled features (issue #25) are filtered out — a disabled extension
+  // registers no UI and no filters; toggling a feature rebuilds the runtime.
   const [runtime, setRuntime] = useState<ExtensionRuntime | null>(null);
 
   useEffect(() => {
-    const created = createExtensionRuntime(PLAYER_EXTENSIONS, {
-      transport: transportFacade,
-      getSnapshot: () => snapshotRef.current,
-      mpv: createMpvBridge(),
-      frames: {
-        subscribe: (cb, opts) => frameHub.subscribe(cb, opts),
-      },
-      storageFor: createExtensionStorage,
-      setChromeHidden: (hidden) => chromeControl.setHidden(hidden),
-    });
+    let enabledIds = enabledExtensionIds(chromeStore.get());
+    const build = (): ExtensionRuntime =>
+      createExtensionRuntime(
+        PLAYER_EXTENSIONS.filter((ext) => enabledIds.has(ext.id)),
+        {
+          transport: transportFacade,
+          getSnapshot: () => snapshotRef.current,
+          mpv: createMpvBridge(),
+          frames: {
+            subscribe: (cb, opts) => frameHub.subscribe(cb, opts),
+          },
+          storageFor: createExtensionStorage,
+          setChromeHidden: (hidden) => chromeControl.setHidden(hidden),
+        },
+      );
+    let created = build();
     setRuntime(created);
+
+    const stopSchema = chromeStore.subscribe(() => {
+      const nextIds = enabledExtensionIds(chromeStore.get());
+      if (sameIdSet(nextIds, enabledIds)) return;
+      enabledIds = nextIds;
+      created.notifyClose();
+      created.dispose();
+      chromeControl.reset();
+      created = build();
+      setRuntime(created);
+    });
+
     return () => {
+      stopSchema();
       // Session end closes the current file before tearing extensions down.
       created.notifyClose();
       created.dispose();
@@ -81,6 +104,12 @@ export function usePlayerExtensions(args: {
   }, [runtime, snapshot]);
 
   return runtime;
+}
+
+function sameIdSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const id of a) if (!b.has(id)) return false;
+  return true;
 }
 
 export type { OpenInfo };
