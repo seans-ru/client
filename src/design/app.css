@@ -319,21 +319,11 @@ body.player-chrome .player-surface {
 }
 
 .nav-brand {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
   padding: var(--space-4) var(--space-4) var(--space-2);
+  color: var(--accent);
   font-size: var(--text-lg);
   font-weight: 700;
   letter-spacing: -0.02em;
-  color: var(--accent);
-}
-
-.nav-brand img {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-  object-fit: cover;
 }
 
 .nav-items {
@@ -366,6 +356,53 @@ body.player-chrome .player-surface {
 .nav-link-selected {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--space-4);
+}
+
+.settings-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.settings-column > .panel {
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.settings-column > .panel .hint {
+  margin: 0;
+}
+
+.settings-panel-heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+  min-width: 0;
+}
+
+.account-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 700px) {
+  .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .nav-footer {
@@ -420,8 +457,8 @@ body.player-chrome .player-surface {
 }
 
 .nav-logout:hover {
-  background: var(--bg-hover);
-  color: var(--ink);
+  background: #dc2626;
+  color: #fff;
 }
 
 .nav-logout:focus-visible {
@@ -1136,6 +1173,12 @@ body.player-chrome .player-surface {
   display: inline-flex;
   gap: var(--space-2);
   align-items: center;
+}
+
+.account-logout:hover:not(:disabled) {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
 }
 
 .account-quota {

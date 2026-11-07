@@ -50,10 +50,7 @@ function NavFooter() {
 function SideNav({ route }: { route: string }) {
   return (
     <nav className="app-nav" aria-label="Основная навигация">
-      <div className="nav-brand">
-        <img src="/seans-icon.svg" alt="" />
-        <span>Seans</span>
-      </div>
+      <div className="nav-brand">Seans</div>
       <ul className="nav-items">
         {NAV_ITEMS.map((item) => {
           const selected =
