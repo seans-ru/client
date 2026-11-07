@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "player-pip",
+  "description": "Локальное окно мини-плеера: события, восстановление позиции и показ окна.",
+  "windows": ["player-pip"],
+  "permissions": [
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-show",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size"
+  ]
+}

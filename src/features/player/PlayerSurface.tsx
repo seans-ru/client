@@ -17,6 +17,7 @@ import { EMPTY_BUNDLE } from "../theintrodb/types";
 import type { TheIntroDbBundle } from "../theintrodb/types";
 import { useSegmentChrome } from "../theintrodb/useSegmentChrome";
 import { chromeControl } from "./extensions/chromeControl";
+import { pipPresentation } from "./extensions/pipPresentation";
 import { EpisodePicker } from "./EpisodePicker";
 import { PanelIcon, PlayerControls } from "./PlayerControls";
 import { CanvasVideoRenderer, FrameStream } from "./frameSink";
@@ -102,6 +103,7 @@ export function PlayerSurface({
   /** Overlay transport strip; its height offsets the popup layer. */
   const [transportAnchor, setTransportAnchor] = useState<HTMLDivElement | null>(null);
   const fullscreen = snapshot.fullscreen;
+  const pipActive = useSyncExternalStore(pipPresentation.subscribe, pipPresentation.isActive);
 
   // Popups float just above the overlay transport; the progressive hint row
   // changes its height, so measure it instead of hardcoding.
@@ -156,6 +158,7 @@ export function PlayerSurface({
   // Paint the offscreen mpv frames into the canvas (frame-stream player).
   // The canvas is plain DOM — popups overlay it with normal z-index.
   useEffect(() => {
+    if (pipActive) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const renderer = new CanvasVideoRenderer(canvas);
@@ -176,10 +179,12 @@ export function PlayerSurface({
     return () => {
       cancelled = true;
       stream.close();
-      frameHub.reset();
       renderer.destroy();
     };
-  }, []);
+  }, [pipActive]);
+
+  // При временной передаче изображения PiP подписки расширений сохраняются.
+  useEffect(() => () => frameHub.reset(), []);
 
   // Size the offscreen render target to the DOM video area (physical px).
   // The canvas fills the same box, so frames map 1:1 onto it.
@@ -269,6 +274,7 @@ export function PlayerSurface({
 
   // Keyboard: Space / ← / → / ↑ / ↓ / F / M.
   useEffect(() => {
+    if (pipActive) return;
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName?.toLowerCase();
@@ -316,10 +322,19 @@ export function PlayerSurface({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [player, snapshot, togglePause, seekTo]);
+  }, [player, snapshot, togglePause, seekTo, pipActive]);
 
   let statusNode: ReactNode = null;
-  if (phase === "loading") {
+  if (pipActive) {
+    statusNode = (
+      <div className="player-surface-status" role="status">
+        <p>Видео открыто в мини-плеере</p>
+        <Button variant="ghost" size="sm" onClick={pipPresentation.returnToMain}>
+          Вернуть в основной плеер
+        </Button>
+      </div>
+    );
+  } else if (phase === "loading") {
     statusNode = (
       <div className="player-surface-status">
         <Spinner label="Загрузка плеера…" />
@@ -354,7 +369,7 @@ export function PlayerSurface({
 
   return (
     <div
-      className={`player-surface${fullscreen ? " player-surface-fullscreen" : ""}${chromeHidden ? " player-chrome-hidden" : ""}`}
+      className={`player-surface${fullscreen ? " player-surface-fullscreen" : ""}${chromeHidden ? " player-chrome-hidden" : ""}${pipActive ? " player-pip-suspended" : ""}`}
       ref={surfaceRef}
     >
       <div className="player-stage">
