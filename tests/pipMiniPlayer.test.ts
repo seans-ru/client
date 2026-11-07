@@ -53,7 +53,7 @@ describe("системное окно PiP", () => {
     const fixture = setup();
     fixture.toggle(); fixture.toggle();
     await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
-    expect(mock.windows[0].options).toMatchObject({ alwaysOnTop: true, url: "index.html#/pip" });
+    expect(mock.windows[0].options).toMatchObject({ alwaysOnTop: true, decorations: false, url: "index.html#/pip" });
     expect(mock.windows[0].options).not.toHaveProperty("parent");
     fixture.dispose();
   });
@@ -63,8 +63,16 @@ describe("системное окно PiP", () => {
     await mock.events.get(PIP_COMMAND)!({ payload: "forward" });
     await mock.events.get(PIP_COMMAND)!({ payload: "toggle-pause" });
     await mock.events.get(PIP_COMMAND)!({ payload: "loadfile" });
-    expect(fixture.transport.seek).toHaveBeenCalledExactlyOnceWith(52);
+    expect(fixture.transport.seek).toHaveBeenCalledExactlyOnceWith(47);
     expect(fixture.transport.togglePause).toHaveBeenCalledTimes(1);
+    fixture.dispose();
+  });
+  it("передаёт таймбар в guarded transport и отсекает недопустимые позиции", async () => {
+    const fixture = setup(); fixture.toggle();
+    await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
+    const send = (position: unknown) => mock.events.get(PIP_COMMAND)!({ payload: { type: "seek", position } });
+    await send(75); await send(-5); await send(120); await send(NaN); await send("60");
+    expect(fixture.transport.seek.mock.calls).toEqual([[75], [0], [100]]);
     fixture.dispose();
   });
   it("отменяет незавершённое открытие при закрытии источника", async () => {

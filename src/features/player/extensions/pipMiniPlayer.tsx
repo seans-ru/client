@@ -57,15 +57,14 @@ export const pipMiniPlayer: PlayerExtension = {
         if (!active || !pip) return;
         try {
           const snapshot = ctx.getSnapshot();
+          if (typeof payload === "object" && payload !== null && "type" in payload && payload.type === "seek" && "position" in payload && typeof payload.position === "number" && Number.isFinite(payload.position)) {
+            await ctx.transport.seek(Math.max(0, snapshot.duration > 0 ? Math.min(snapshot.duration, payload.position) : payload.position));
+            return;
+          }
           switch (payload) {
             case "toggle-pause": await ctx.transport.togglePause(); break;
-            case "back": await ctx.transport.seek(Math.max(0, snapshot.position - 10)); break;
-            case "forward": await ctx.transport.seek(snapshot.duration > 0 ? Math.min(snapshot.duration, snapshot.position + 10) : snapshot.position + 10); break;
-            case "return":
-              await getCurrentWebviewWindow().unminimize();
-              await getCurrentWebviewWindow().setFocus();
-              close();
-              break;
+            case "back": await ctx.transport.seek(Math.max(0, snapshot.position - 5)); break;
+            case "forward": await ctx.transport.seek(snapshot.duration > 0 ? Math.min(snapshot.duration, snapshot.position + 5) : snapshot.position + 5); break;
           }
         } catch (error) {
           console.warn("[player.pip]", error);
@@ -86,8 +85,8 @@ export const pipMiniPlayer: PlayerExtension = {
         if (!active || opening !== generation) return;
         const created = new WebviewWindow(PIP_LABEL, {
           url: "index.html#/pip", title: "Seans — мини-плеер",
-          width: 480, height: 320, minWidth: 280, minHeight: 210,
-          alwaysOnTop: true, resizable: true, center: true, visible: false,
+          width: 480, height: 270, minWidth: 280, minHeight: 158,
+          decorations: false, alwaysOnTop: true, resizable: true, center: true, visible: false,
           // Без parent: Windows скрывает owned-окно при сворачивании владельца.
         });
         pip = created;
