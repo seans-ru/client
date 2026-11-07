@@ -112,14 +112,14 @@ function Router() {
   }, [status, route]);
 
   if (status === "loading") {
-    return <LoadingSlot label="Проверка сессии…" />;
+    return <LoadingSlot label="Проверка сессии…" logo />;
   }
 
   if (route === ROUTES.login) return <LoginScreen />;
 
   if (status === "anonymous") {
     // Redirect effect above sends the user to login; avoid flashing home.
-    return <LoadingSlot label="Проверка сессии…" />;
+    return <LoadingSlot label="Проверка сессии…" logo />;
   }
 
   return <AppShell route={route}>{renderScreen(route)}</AppShell>;

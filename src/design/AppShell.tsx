@@ -10,8 +10,6 @@ import type { ReactNode } from "react";
 import { useAuth } from "../features/auth";
 import { UpdateBanner } from "../features/updater";
 import { ROUTES, isFullBleedRoute } from "../lib/routeResolver";
-import { Button } from "./primitives";
-
 type NavItem = { href: string; label: string };
 
 export const NAV_ITEMS: readonly NavItem[] = [
@@ -27,14 +25,23 @@ function NavFooter() {
   return (
     <footer className="nav-footer">
       {name ? (
-        <>
+        <div className="nav-account">
           <a className="nav-user" href={ROUTES.settings} title={name}>
             {name}
           </a>
-          <Button variant="ghost" size="sm" onClick={() => void logout()}>
-            Выйти
-          </Button>
-        </>
+          <button
+            className="nav-logout"
+            type="button"
+            onClick={() => void logout()}
+            aria-label="Выйти"
+            title="Выйти"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
+              <path d="M10 17l5-5-5-5M15 12H3" />
+              <path d="M12 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5" />
+            </svg>
+          </button>
+        </div>
       ) : null}
     </footer>
   );
@@ -43,7 +50,10 @@ function NavFooter() {
 function SideNav({ route }: { route: string }) {
   return (
     <nav className="app-nav" aria-label="Основная навигация">
-      <div className="nav-brand">Seans</div>
+      <div className="nav-brand">
+        <img src="/seans-icon.svg" alt="" />
+        <span>Seans</span>
+      </div>
       <ul className="nav-items">
         {NAV_ITEMS.map((item) => {
           const selected =

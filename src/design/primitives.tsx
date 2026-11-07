@@ -180,7 +180,7 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="state state-empty">
+     <div className="state state-empty">
       <strong>{title}</strong>
       <p>{description}</p>
       {action ? <div className="state-actions">{action}</div> : null}

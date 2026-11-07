@@ -14,6 +14,7 @@ import {
   continueFileForItem,
   filterLibraryItems,
   formatLibraryFilter,
+  formatLibraryStatus,
   resumePositionForFile,
   watchStateForItem,
   type LibraryFilter,
@@ -117,7 +118,7 @@ export function LibraryScreen() {
           <ul>
             {tasks.map((task) => (
               <li key={String(task.id)}>
-                <span>{task.stage || task.status}</span>
+                <span>{formatLibraryStatus(task.stage || task.status)}</span>
                 <span className="hint">{Math.round(task.progress_pct)}%</span>
                 <Button variant="ghost" size="sm" onClick={() => handleCancelTask(task.id)}>
                   Отменить
