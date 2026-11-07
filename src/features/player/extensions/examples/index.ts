@@ -11,6 +11,7 @@
 
 import type { PlayerExtension } from "../types";
 import { autoHide } from "../autoHide";
+import { debandDenoise } from "../debandDenoise";
 import { equalizer } from "../eq";
 import { hdr } from "../hdr";
 import { pictureQuality } from "../pictureQuality";
@@ -26,4 +27,5 @@ export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
   equalizer,
   pictureQuality,
   hdr,
+  debandDenoise,
 ];
