@@ -1,0 +1,8 @@
+.pip-window { position: fixed; inset: 0; display: flex; flex-direction: column; color: #f8fafc; background: #000; font: 12px system-ui, sans-serif; }
+.pip-video { display: block; width: 100%; height: 0; flex: 1 1 0; min-height: 0; object-fit: contain; }
+.pip-controls { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 8px; background: #11151c; font-variant-numeric: tabular-nums; }
+.pip-controls button { min-width: 32px; min-height: 32px; color: inherit; background: #292f3c; border: 0; border-radius: 6px; cursor: pointer; }
+.pip-controls button:disabled { opacity: .4; cursor: default; }
+.pip-controls button:focus-visible { outline: 2px solid #a78bfa; }
+.pip-controls span { white-space: nowrap; }
+.pip-status { position: absolute; inset: 12px 12px auto; padding: 10px; background: #20242ddd; border-radius: 6px; }

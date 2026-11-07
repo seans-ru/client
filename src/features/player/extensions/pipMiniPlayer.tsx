@@ -1,246 +1,117 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
-import type { PlayerSnapshot } from "../playerTypes";
-import type { PlayerExtension, PlayerExtensionContext } from "./types";
-import "./pipMiniPlayer.css";
+import { useSyncExternalStore } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { emitTo, listen } from "@tauri-apps/api/event";
+import { WebviewWindow, getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { playerFramesUrl } from "../playerApi";
+import type { PlayerExtension } from "./types";
+import { PIP_COMMAND, PIP_ERROR, PIP_INIT, PIP_LABEL, PIP_REQUEST, PIP_STATE, pipState } from "./pipProtocol";
 
-const POSITION_KEY = "position";
-const DEFAULT_POSITION = { x: 1, y: 1 };
-const WINDOW_WIDTH = 320;
-const WINDOW_HEIGHT = 265;
-
-type Position = { x: number; y: number };
-type MiniPlayerState = {
-  open: boolean;
-  snapshot: PlayerSnapshot;
-  position: Position;
-};
-
-function loadPosition(ctx: PlayerExtensionContext): Position {
-  const saved = ctx.storage.get<unknown>(POSITION_KEY, DEFAULT_POSITION);
-  if (
-    typeof saved === "object" && saved !== null &&
-    "x" in saved && "y" in saved &&
-    typeof saved.x === "number" && typeof saved.y === "number"
-  ) {
-    return {
-      x: Math.min(1, Math.max(0, saved.x)),
-      y: Math.min(1, Math.max(0, saved.y)),
-    };
-  }
-  return DEFAULT_POSITION;
-}
-
-function MiniPlayer({
-  ctx,
-  showToggle,
-  subscribe,
-  getState,
-  setOpen,
-  setPosition,
-}: {
-  ctx: PlayerExtensionContext;
-  showToggle: boolean;
-  subscribe: (listener: () => void) => () => void;
-  getState: () => MiniPlayerState;
-  setOpen: (open: boolean) => void;
-  setPosition: (position: Position) => void;
+type Status = { open: boolean; pending: boolean; error: string | null };
+function Toggle({ subscribe, getStatus, toggle }: {
+  subscribe: (cb: () => void) => () => void;
+  getStatus: () => Status;
+  toggle: () => void;
 }) {
-  const liveState = useSyncExternalStore(subscribe, getState, getState);
-  const miniCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [surfaceBounds, setSurfaceBounds] = useState({ left: 0, top: 0, width: 0, height: 0 });
-  const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
-  const [dragging, setDragging] = useState(false);
-
-  useEffect(() => {
-    if (!liveState.open) return;
-    const target = miniCanvasRef.current;
-    if (!target) return;
-    const context = target.getContext("2d");
-    if (!context) return;
-
-    let frameId = 0;
-    let previousDraw = 0;
-    const draw = (time: number) => {
-      if (time - previousDraw >= 1000 / 15) {
-        previousDraw = time;
-        const source = document.querySelector<HTMLCanvasElement>(".player-video-canvas");
-        if (source?.width && source.height) {
-          const ratio = Math.min(target.clientWidth / source.width, target.clientHeight / source.height);
-          const width = Math.max(1, Math.round(source.width * ratio));
-          const height = Math.max(1, Math.round(source.height * ratio));
-          const left = Math.round((target.clientWidth - width) / 2);
-          const top = Math.round((target.clientHeight - height) / 2);
-          if (target.width !== target.clientWidth || target.height !== target.clientHeight) {
-            target.width = target.clientWidth;
-            target.height = target.clientHeight;
-          }
-          context.clearRect(0, 0, target.width, target.height);
-          try {
-            context.drawImage(source, left, top, width, height);
-          } catch {
-            // The main renderer may be replacing its WebGL context during resize.
-          }
-        }
-      }
-      frameId = requestAnimationFrame(draw);
-    };
-    frameId = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(frameId);
-  }, [liveState.open]);
-
-  useEffect(() => {
-    if (!liveState.open) return;
-    const surface = miniCanvasRef.current?.closest(".player-video-area");
-    if (!surface) return;
-    const update = () => {
-      const bounds = surface.getBoundingClientRect();
-      setSurfaceBounds({ left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height });
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(surface);
-    return () => observer.disconnect();
-  }, [liveState.open]);
-
-  const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if ((event.target as HTMLElement).closest("button")) return;
-    const surface = event.currentTarget.closest(".player-video-area");
-    if (!surface) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const rect = event.currentTarget.parentElement?.getBoundingClientRect();
-    if (!rect) return;
-    dragRef.current = {
-      pointerId: event.pointerId,
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    };
-    setDragging(true);
-  }, []);
-
-  const onPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current || dragRef.current.pointerId !== event.pointerId) return;
-    const surface = event.currentTarget.closest(".player-video-area");
-    if (!surface) return;
-    const bounds = surface.getBoundingClientRect();
-    const maxX = Math.max(0, bounds.width - Math.min(WINDOW_WIDTH, Math.max(0, bounds.width - 16)));
-    const maxY = Math.max(0, bounds.height - WINDOW_HEIGHT);
-    const left = Math.min(maxX, Math.max(0, event.clientX - bounds.left - dragRef.current.x));
-    const top = Math.min(maxY, Math.max(0, event.clientY - bounds.top - dragRef.current.y));
-    setPosition({ x: maxX ? left / maxX : 0, y: maxY ? top / maxY : 0 });
-  }, [setPosition]);
-
-  const onPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId !== event.pointerId) return;
-    dragRef.current = null;
-    setDragging(false);
-  }, []);
-
-  if (showToggle) {
-    return (
-      <button className="pip-mini-toggle" type="button" onClick={() => setOpen(!liveState.open)}>
-        {liveState.open ? "Закрыть мини-плеер" : "Открыть мини-плеер"}
-      </button>
-    );
-  }
-  if (!liveState.open) return null;
-
-  const position = liveState.position;
-  const width = Math.min(WINDOW_WIDTH, Math.max(0, surfaceBounds.width - 16));
-  const left = surfaceBounds.left + position.x * Math.max(0, surfaceBounds.width - width);
-  const top = surfaceBounds.top + position.y * Math.max(0, surfaceBounds.height - WINDOW_HEIGHT);
-  return (
-    <div
-      className="pip-mini-window"
-      style={{ left: `${left}px`, top: `${top}px`, width: `${width}px` }}
-      role="region"
-      aria-label="Мини-плеер"
-    >
-      <div
-        className={`pip-mini-title${dragging ? " pip-mini-title-dragging" : ""}`}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-      >
-        <span>Мини-плеер</span>
-        <button type="button" aria-label="Закрыть мини-плеер" onClick={() => setOpen(false)}>×</button>
-      </div>
-      <canvas className="pip-mini-video" ref={miniCanvasRef} aria-label="Видео" />
-      <div className="pip-mini-controls">
-        <button type="button" aria-label="Назад на 10 секунд" onClick={() => void ctx.transport.seek(Math.max(0, ctx.getSnapshot().position - 10))}>−10</button>
-        <button type="button" aria-label={liveState.snapshot.pause ? "Воспроизвести" : "Пауза"} onClick={() => void ctx.transport.togglePause()}>
-          {liveState.snapshot.pause ? "▶" : "Ⅱ"}
-        </button>
-        <span>{formatTime(liveState.snapshot.position)} / {formatTime(liveState.snapshot.duration)}</span>
-        <button type="button" aria-label="Вперёд на 10 секунд" onClick={() => void ctx.transport.seek(Math.min(liveState.snapshot.duration, ctx.getSnapshot().position + 10))}>+10</button>
-      </div>
-    </div>
-  );
-}
-
-function formatTime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
-  const whole = Math.floor(seconds);
-  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+  const state = useSyncExternalStore(subscribe, getStatus, getStatus);
+  return <section>
+    <button className="player-menu-item" type="button" disabled={state.pending} onClick={toggle}>
+      {state.pending ? "Открываем мини-плеер…" : state.open ? "Закрыть мини-плеер" : "Мини-плеер поверх окон"}
+    </button>
+    {state.error && <p role="alert" className="player-menu-empty">{state.error}</p>}
+  </section>;
 }
 
 export const pipMiniPlayer: PlayerExtension = {
   id: "pip-mini-player",
-  name: "Мини-плеер (прототип)",
+  name: "Мини-плеер поверх окон",
   setup(ctx) {
-    let current: MiniPlayerState = {
-      open: false,
-      snapshot: ctx.getSnapshot(),
-      position: loadPosition(ctx),
-    };
+    let active = true;
+    let pip: WebviewWindow | null = null;
+    let generation = 0;
+    let status: Status = { open: false, pending: false, error: null };
     const listeners = new Set<() => void>();
-    const notify = () => listeners.forEach((listener) => listener());
-    const setOpen = (open: boolean) => {
-      current = { ...current, open };
-      notify();
+    const stops: (() => void)[] = [];
+    const update = (next: Partial<Status>) => {
+      status = { ...status, ...next };
+      listeners.forEach(cb => cb());
     };
-    const setPosition = (position: Position) => {
-      current = { ...current, position };
-      ctx.storage.set(POSITION_KEY, position);
-      notify();
+    const fail = (error: unknown) => {
+      console.warn("[player.pip]", error);
+      if (active) update({ pending: false, error: "Не удалось открыть мини-плеер. Попробуйте ещё раз." });
     };
-    const unsubscribeSnapshot = ctx.onSnapshot((snapshot) => {
-      current = { ...current, snapshot };
-      notify();
+    const close = () => {
+      generation++;
+      if (pip && status.open) void pip.close().catch(fail);
+      if (!pip && active) update({ pending: false });
+    };
+    const keep = (stop: () => void) => { if (active) stops.push(stop); else stop(); };
+    const ready = isTauri() ? Promise.all([
+      listen(PIP_REQUEST, async () => {
+        if (!active || !pip) return;
+        try {
+          const framesUrl = await playerFramesUrl();
+          if (active && pip) await emitTo(PIP_LABEL, PIP_INIT, { framesUrl, state: pipState(ctx.getSnapshot()) });
+        } catch (error) { fail(error); }
+      }, { target: { kind: "WebviewWindow", label: "main" } }).then(keep),
+      listen<unknown>(PIP_COMMAND, async ({ payload }) => {
+        if (!active || !pip) return;
+        try {
+          const snapshot = ctx.getSnapshot();
+          switch (payload) {
+            case "toggle-pause": await ctx.transport.togglePause(); break;
+            case "back": await ctx.transport.seek(Math.max(0, snapshot.position - 10)); break;
+            case "forward": await ctx.transport.seek(snapshot.duration > 0 ? Math.min(snapshot.duration, snapshot.position + 10) : snapshot.position + 10); break;
+            case "return":
+              await getCurrentWebviewWindow().unminimize();
+              await getCurrentWebviewWindow().setFocus();
+              close();
+              break;
+          }
+        } catch (error) {
+          console.warn("[player.pip]", error);
+          await emitTo(PIP_LABEL, PIP_ERROR, "Не удалось выполнить действие.").catch(() => {});
+        }
+      }, { target: { kind: "WebviewWindow", label: "main" } }).then(keep),
+      getCurrentWebviewWindow().onCloseRequested(close).then(keep),
+    ]) : Promise.resolve();
+    // Обработчики регистрируются до открытия окна: первый запрос не потеряется.
+    void ready.catch(fail);
+    const toggle = async () => {
+      if (pip || status.pending) { if (pip) close(); return; }
+      if (!isTauri()) { update({ error: "Мини-плеер доступен в настольном приложении Seans." }); return; }
+      update({ pending: true, error: null });
+      const opening = ++generation;
+      try {
+        await ready;
+        if (!active || opening !== generation) return;
+        const created = new WebviewWindow(PIP_LABEL, {
+          url: "index.html#/pip", title: "Seans — мини-плеер",
+          width: 480, height: 320, minWidth: 280, minHeight: 210,
+          alwaysOnTop: true, resizable: true, center: true, visible: false,
+          // Без parent: Windows скрывает owned-окно при сворачивании владельца.
+        });
+        pip = created;
+        await created.once("tauri://created", () => {
+          if (!active || opening !== generation) void created.close().catch(fail);
+          else update({ open: true, pending: false });
+        });
+        await created.once("tauri://error", event => { pip = null; update({ open: false }); fail(event.payload); });
+        await created.once("tauri://destroyed", () => { if (pip === created) pip = null; if (active) update({ open: false, pending: false }); });
+      } catch (error) { pip = null; fail(error); }
+    };
+    const stopSnapshot = ctx.onSnapshot(snapshot => {
+      if (pip && status.open) void emitTo(PIP_LABEL, PIP_STATE, pipState(snapshot)).catch(() => {});
     });
-    const unsubscribeClose = ctx.onClose(() => setOpen(false));
-    const unsubscribeSettings = ctx.ui.add("settings.menu", () => (
-      <MiniPlayer
-        ctx={ctx}
-        showToggle
-        subscribe={(listener) => {
-          listeners.add(listener);
-          return () => listeners.delete(listener);
-        }}
-        getState={() => current}
-        setOpen={setOpen}
-        setPosition={setPosition}
-      />
-    ));
-    const unsubscribeOverlay = ctx.ui.add("overlay", () => (
-      <MiniPlayer
-        ctx={ctx}
-        showToggle={false}
-        subscribe={(listener) => {
-          listeners.add(listener);
-          return () => listeners.delete(listener);
-        }}
-        getState={() => current}
-        setOpen={setOpen}
-        setPosition={setPosition}
-      />
-    ));
+    const stopClose = ctx.onClose(close);
+    const stopUi = ctx.ui.add("settings.menu", () => <Toggle
+      subscribe={cb => { listeners.add(cb); return () => { listeners.delete(cb); }; }}
+      getStatus={() => status} toggle={() => { void toggle(); }}
+    />);
     return () => {
-      unsubscribeSnapshot();
-      unsubscribeClose();
-      unsubscribeSettings();
-      unsubscribeOverlay();
+      active = false;
+      close();
+      stopSnapshot(); stopClose(); stopUi();
+      stops.forEach(stop => stop());
       listeners.clear();
     };
   },
