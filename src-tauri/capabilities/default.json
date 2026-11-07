@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the Seans main window (M1 shell: deep-link + window focus; M11: updater check/download/install + process restart).",
+  "description": "Default capability for the Seans main window (M1 shell: deep-link + window focus; M11: updater check/download/install + process restart; #14: capture dialogs).",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -11,6 +11,7 @@
     "deep-link:default",
     "updater:default",
     "process:allow-restart",
+    "dialog:default",
     "http:default",
     {
       "identifier": "http:allow-fetch",

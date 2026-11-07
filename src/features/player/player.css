@@ -430,6 +430,67 @@
   user-select: none;
 }
 
+/* ---------------------------------------------------------------- capture */
+
+.player-capture-marks {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  z-index: 7;
+  box-shadow: var(--shadow-2);
+}
+
+.player-capture-marks-label {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.player-capture-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.player-capture-action {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.player-capture-action:hover {
+  background: var(--bg-hover);
+}
+
+.player-capture-action:focus-visible {
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: var(--focus-offset);
+}
+
+.player-capture-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.player-capture-path {
+  padding: 6px 8px;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* --------------------------------------------------------------- sidecar */
 
 .player-sidecar {

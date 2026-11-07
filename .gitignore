@@ -12,3 +12,6 @@ keys/
 src-tauri/resources/mpv/*.dll
 src-tauri/resources/mpv/*.exe
 src-tauri/resources/mpv/*.txt
+# Optional ffmpeg for clip export (issue #14) — the binary is never committed.
+src-tauri/resources/ffmpeg/*.exe
+src-tauri/resources/ffmpeg/ffmpeg

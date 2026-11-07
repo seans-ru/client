@@ -40,7 +40,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "resources/mpv/*": "mpv/"
+      "resources/mpv/*": "mpv/",
+      "resources/ffmpeg/*": "ffmpeg/"
     },
     "windows": {
       "nsis": {

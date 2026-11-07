@@ -1,6 +1,7 @@
 // MSVC prints an import-library creation banner on every link; not actionable.
 #![allow(linker_messages)]
 
+mod capture;
 mod commands;
 mod discord;
 mod player;
@@ -52,6 +53,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_http::init())
+        // Issue #14: save/open dialogs (capture folder, clip export path).
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             #[cfg(desktop)]
             {
@@ -105,6 +108,9 @@ pub fn run() {
             player::player_get_property,
             player::player_set_property,
             player::player_command,
+            capture::capture_default_dir,
+            capture::capture_reveal,
+            capture::capture_export_clip,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Seans")
