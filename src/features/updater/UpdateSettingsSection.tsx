@@ -45,11 +45,13 @@ export function UpdateSettingsSection() {
 
   return (
     <div className="panel">
-      <strong>Обновления</strong>
-      <p className="hint">
-        Версия приложения: {appVersion ?? "недоступна"}.
-        {availableVersion ? ` Доступна версия ${availableVersion}.` : ""}
-      </p>
+      <div className="settings-panel-heading">
+        <strong>Обновления</strong>
+        <p className="hint">
+          Версия приложения: {appVersion ?? "недоступна"}.
+          {availableVersion ? ` Доступна версия ${availableVersion}.` : ""}
+        </p>
+      </div>
       <p className="hint">Статус: {updatePhaseLabel(phase)}.</p>
       {progressLabel && phase === "downloading" ? (
         percent != null ? (

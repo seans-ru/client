@@ -1,12 +1,12 @@
 /**
  * Regenerates app icons in src-tauri/icons from the SVG master
  * (src-tauri/icons/seans-icon.svg) via the Tauri CLI, then keeps only
- * the Windows bundle set.
+ * the Windows bundle set and copies web icons into public/.
  * Run: node scripts/generate-icons.mjs  (requires `npm install` first)
  * Idempotent: safe to re-run.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,3 +46,9 @@ for (const entry of readdirSync(iconsDir, { withFileTypes: true })) {
 }
 
 console.log("icons written to", iconsDir);
+
+const publicDir = join(root, "public");
+mkdirSync(publicDir, { recursive: true });
+copyFileSync(svg, join(publicDir, "seans-icon.svg"));
+copyFileSync(join(iconsDir, "icon.ico"), join(publicDir, "favicon.ico"));
+console.log("web icons written to", publicDir);

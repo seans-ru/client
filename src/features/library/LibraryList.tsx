@@ -123,7 +123,7 @@ function ActiveTaskChip({
 }) {
   return (
     <div className="library-task">
-      <Badge tone="neutral">{task.stage || task.status}</Badge>
+      <Badge tone="neutral">{formatLibraryStatus(task.stage || task.status)}</Badge>
       <span className="hint">
         {Math.round(task.progress_pct)}% · {formatBytes(task.speed_bps)}/s
       </span>

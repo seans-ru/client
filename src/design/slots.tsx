@@ -5,10 +5,17 @@ import { EmptyState, ErrorState, Spinner } from "./primitives";
  * Shared loading / empty / error slots used by M1 screens.
  * Thin wrappers over the M3 primitives (same Russian defaults).
  */
-export function LoadingSlot({ label = "Загрузка…" }: { label?: string }) {
+export function LoadingSlot({ label = "Загрузка…", logo = false }: { label?: string; logo?: boolean }) {
   return (
-    <div className="slot slot-loading">
-      <Spinner label={label} />
+    <div className={`slot slot-loading${logo ? " slot-loading-logo" : ""}`}>
+      {logo ? <img className="loading-logo" src="/seans-icon-animated.svg" alt="" /> : null}
+      {logo ? (
+        <span className="loading-logo-label" role="status" aria-live="polite">
+          {label}
+        </span>
+      ) : (
+        <Spinner label={label} />
+      )}
     </div>
   );
 }
