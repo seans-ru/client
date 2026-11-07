@@ -15,11 +15,13 @@ import { equalizer } from "../eq";
 import { volumeProcessor } from "../volumeProcessor";
 import { ambientLightStub } from "./ambientLightStub";
 import { constantVolumeStub } from "./constantVolumeStub";
+import { pipMiniPlayer } from "../pipMiniPlayer";
 
-export { ambientLightStub, constantVolumeStub };
+export { ambientLightStub, constantVolumeStub, pipMiniPlayer };
 
 export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
   autoHide,
   volumeProcessor,
   equalizer,
+  pipMiniPlayer,
 ];
