@@ -1,77 +1,78 @@
-# Mini-player / PiP: design and prototype
+# Мини-плеер / PiP: дизайн и прототип
 
-Issue: [#24](https://github.com/seans-ru/client/issues/24)
+Задача: [#24](https://github.com/seans-ru/client/issues/24)
 
-Status: design and in-window prototype. This is a review artifact, not the
-production PiP implementation. The prototype is registered as a normal player
-extension and can be removed without changing the playback core.
+Статус: дизайн и прототип внутри окна приложения. Это материал для ревью, а
+не production-реализация PiP. Прототип подключён как обычное расширение
+плеера и удаляется без изменений ядра.
 
-## Decision
+## Решение
 
-Choose **an in-window mini-player overlay** for phase 1. It keeps using the
-current player session and its guarded transport, so there is one decoder,
-one audio timeline, and no second source open. It can be implemented in the
-existing TS extension layer. It is always above the video and player chrome
-inside the application window, but it cannot stay above other applications.
+Для первой фазы выбран **мини-плеер поверх видео внутри окна приложения**.
+Он использует текущую сессию плеера и её guarded transport: один декодер,
+одна временная шкала звука, без повторного открытия источника. Реализация
+помещается в существующий слой TS-расширений. Мини-плеер всегда выше видео и
+панелей плеера, но не может оставаться поверх других приложений.
 
-Phase 2 may evaluate a native Tauri window once the prototype is reviewed.
-Windows Compact Overlay is not part of this implementation.
+После ревью прототипа во второй фазе можно оценить отдельное нативное окно
+Tauri. Windows Compact Overlay не входит в эту реализацию.
 
-## Options
+## Сравнение вариантов
 
-| Option | What it provides | Cost and constraints | Decision |
+| Вариант | Возможности | Цена и ограничения | Решение |
 | --- | --- | --- | --- |
-| In-window overlay | Draggable mini view over the current video; same transport and audio session; simple close and position restore | Visible only while the player surface exists; does not survive minimizing the application; current prototype mirrors the rendered canvas | **Prototype now** |
-| Separate Tauri window | True topmost window over other apps, can remain visible while the main window is covered | Requires a second webview/window lifecycle, bounds persistence, focus/close coordination, and a supported way to present the active mpv frames in another window. A DOM canvas cannot simply be shared across webviews; copying frames across windows adds bandwidth and latency. | Revisit after an explicit cross-platform render-surface design; do not rebind mpv/WGL in this issue |
-| Windows Compact Overlay | Windows-managed compact view that can float over other apps | Windows-specific API and lifecycle; not portable to macOS/Linux/Android. It still needs a supported video presentation surface and a separate platform implementation. | Reject for the shared player feature |
+| Overlay внутри окна | Перетаскиваемое мини-видео поверх текущего; общий транспорт и звук; простое закрытие и восстановление позиции | Видно, пока существует экран плеера; при сворачивании приложения скрывается; прототип зеркалирует отрисованный canvas | **Сделать прототип** |
+| Отдельное окно Tauri | Настоящее topmost-окно поверх других приложений; может оставаться видимым, когда главное окно закрыто другими окнами | Нужны жизненный цикл второго окна, сохранение его границ, координация фокуса и закрытия, а также поддерживаемый способ показывать кадры mpv в другом окне. DOM-canvas нельзя напрямую разделить между webview; копирование кадров между окнами добавит трафик и задержку | Вернуться к оценке после отдельного кроссплатформенного решения по рендерингу; в этой задаче не переносить mpv/WGL |
+| Windows Compact Overlay | Системное компактное окно поверх других приложений в Windows | Windows-специфичный API и жизненный цикл; не переносится на macOS/Linux/Android. Всё равно нужен поддерживаемый видеослой и отдельная платформенная реализация | Не выбирать для общей функции плеера |
 
-## Prototype behavior
+## Поведение прототипа
 
-- Open/close from the playback settings menu. The mini-player appears over the
-  video and remains above the transport and other overlays.
-- Drag by the title strip. The normalized position is stored per app window and
-  restored on the next open; bounds are clamped when the surface is resized.
-- Play/pause and ±10 s seek use `ctx.transport`, which is the same guarded
-  transport as the main controls. Progressive seek limits and room behavior
-  therefore remain in force.
-- The mini view mirrors the current rendered canvas at up to 15 frames/s. It
-  does not open another stream or mpv session.
-- Closing the current source closes the mini-player. Closing the mini-player
-  never stops playback.
-- Audio, subtitle selection, speed, and fullscreen remain owned by the main
-  player. The mini-player has no separate audio or subtitle state.
+- Открытие и закрытие доступны в меню настроек воспроизведения. Мини-плеер
+  располагается поверх видео, транспортной панели и других оверлеев.
+- Перетаскивание выполняется за заголовок. Нормализованная позиция хранится
+  для окна приложения и восстанавливается при следующем открытии; при
+  изменении размеров видеообласти координаты ограничиваются её границами.
+- Play/pause и перемотка на ±10 с вызывают `ctx.transport` — тот же guarded
+  transport, что используется главными контролами. Ограничения progressive
+  и поведение комнат сохраняются.
+- Мини-плеер зеркалирует существующий canvas с частотой до 15 кадров/с. Он
+  не открывает дополнительный поток или сессию mpv.
+- Закрытие текущего источника закрывает мини-плеер. Закрытие мини-плеера не
+  останавливает воспроизведение.
+- Звук, субтитры, скорость и полноэкранный режим остаются настройками главного
+  плеера. У мини-плеера нет отдельного состояния аудио или субтитров.
 
-## Playback and window cases
+## Сценарии воспроизведения и окна
 
-| Case | Expected behavior |
+| Сценарий | Ожидаемое поведение |
 | --- | --- |
-| Audio | Continues in the single existing mpv session. No audio is copied or restarted. |
-| Subtitles | The mirrored picture contains whatever the existing renderer paints; subtitle-track selection stays in the main settings menu. |
-| Controls | Mini play/pause and seek call the guarded extension transport. Other settings remain in the main controls. |
-| Resize | Position is clamped to the video-area bounds; video keeps a 16:9 box. |
-| Minimize main app | In-window overlay is hidden with the app. True cross-app always-on-top requires the separate-window phase. |
-| Fullscreen | The overlay remains attached to the video area and above its controls. |
-| Source close / switch | Source close hides the overlay; a newly opened source can reopen it from settings. |
-| Performance | Canvas copy is capped at 15 fps and only runs while the mini-player is open. It adds a small canvas draw cost and no additional decoder or frame stream. |
+| Звук | Играет в текущей сессии mpv. Звук не копируется и не перезапускается. |
+| Субтитры | Зеркальное изображение содержит то, что уже отрисовано существующим рендерером; выбор дорожки остаётся в главном меню настроек. |
+| Управление | Play/pause и перемотка вызывают guarded transport расширения. Остальные настройки остаются в главных контролах. |
+| Изменение размера | Позиция ограничивается видеообластью; видео сохраняет пропорцию 16:9. |
+| Сворачивание приложения | Overlay скрывается вместе с приложением. Для показа поверх других приложений потребуется отдельная фаза с системным окном. |
+| Полный экран | Overlay остаётся привязан к видеообласти и поверх её контролов. |
+| Закрытие/смена источника | При закрытии источника overlay скрывается; для нового источника его можно снова открыть через настройки. |
+| Производительность | Копирование canvas ограничено 15 кадрами/с и выполняется только пока мини-плеер открыт. Оно добавляет небольшую нагрузку на рисование, но не запускает ещё один декодер или поток кадров. |
 
-## Prototype boundary and phase 2
+## Граница прототипа и вторая фаза
 
-This prototype reads the existing `.player-video-canvas` from the overlay slot
-and copies it into a small 2D canvas. That DOM lookup is intentionally a
-prototype seam: the extension contract exposes downsampled `FrameSample`s for
-analysis, not full-resolution frames for a second renderer. Do not silently
-raise that API's bandwidth for production. If a separate window is approved,
-first agree on a cross-platform render-surface/frame-presentation contract
-with the porting work, then measure frame-copy cost and latency on Windows,
-macOS, and Linux. No Rust, FFI, player command, or frame-wire contract changes
-are part of this issue.
+Прототип находит существующий `.player-video-canvas` из overlay-слота и
+копирует изображение в небольшой 2D-canvas. Этот поиск по DOM намеренно
+оставлен временным решением: контракт расширений предоставляет уменьшенные
+`FrameSample` для анализа, а не кадры полного разрешения для второго
+рендерера. Не следует незаметно увеличивать пропускную способность этого API
+для production. Если будет одобрено отдельное окно, сначала нужно согласовать
+с портингом кроссплатформенный контракт поверхности/передачи кадров, затем
+измерить нагрузку и задержку на Windows, macOS и Linux. Изменения Rust, FFI,
+команд плеера и формата кадров в эту задачу не входят.
 
-## Acceptance checklist
+## Критерии приёмки
 
-- [x] Compare the three implementation options and record a decision.
-- [x] Record audio, subtitles, controls, resize, minimize, fullscreen, and
-  performance behavior.
-- [x] Provide a minimal registered TS extension prototype with mirrored
-  video, play/pause, seek, close, and persisted position.
-- [ ] Review prototype and design with maintainers before opening a separate
-  production implementation issue.
+- [x] Сравнены три варианта реализации и записано решение.
+- [x] Описано поведение звука, субтитров, управления, изменения размера,
+  сворачивания, полного экрана и производительности.
+- [x] Подготовлен минимальный TS-прототип расширения с зеркалированием видео,
+  play/pause, перемоткой, закрытием и сохранением позиции.
+- [ ] Перед отдельной production-задачей нужно получить ревью прототипа и
+  дизайна от сопровождающих.
