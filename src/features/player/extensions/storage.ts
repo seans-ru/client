@@ -11,8 +11,17 @@ export function extensionStorageKey(extId: string, key: string): string {
   return `seans.player.ext.${extId}.${key}`;
 }
 
+/**
+ * One storage facade per extension id (memoized) so the settings section and
+ * a running player share the same instance — and therefore the same
+ * settings store built on top of it.
+ */
+const facades = new Map<string, ExtensionStorage>();
+
 export function createExtensionStorage(extId: string): ExtensionStorage {
-  return {
+  const cached = facades.get(extId);
+  if (cached) return cached;
+  const facade: ExtensionStorage = {
     get<T>(key: string, fallback: T): T {
       try {
         const raw = globalThis.localStorage?.getItem(
@@ -36,4 +45,6 @@ export function createExtensionStorage(extId: string): ExtensionStorage {
       }
     },
   };
+  facades.set(extId, facade);
+  return facade;
 }

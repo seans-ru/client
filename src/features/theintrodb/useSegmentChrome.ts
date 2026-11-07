@@ -11,6 +11,8 @@ import {
   skipTargetMs,
 } from "./introSegments";
 import type { ActiveSkip, SegmentMarker, TheIntroDbBundle } from "./types";
+import { useChromeSchema } from "../playerSettings/chromeStore";
+import { isFeatureEnabled } from "../playerSettings/featureCatalog";
 
 /** Skip buttons stay visible this long after leaving the range. */
 export const SKIP_LINGER_MS = 2000;
@@ -38,7 +40,13 @@ export function useSegmentChrome(options: {
 }): SegmentChromeState {
   const { bundle, positionMs, onSeekMs, mediaId, alreadyReviewed } = options;
 
-  const markers = useMemo(() => markerList(bundle), [bundle]);
+  // «Маркеры сегментов» (issue #25): off → a clean seek rail.
+  const chromeSchema = useChromeSchema();
+  const markersOn = isFeatureEnabled(chromeSchema, "markers");
+  const markers = useMemo(
+    () => (markersOn ? markerList(bundle) : []),
+    [bundle, markersOn],
+  );
 
   const [skips, setSkips] = useState<ActiveSkip[]>([]);
   const [skipVisible, setSkipVisible] = useState(false);

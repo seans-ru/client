@@ -161,7 +161,12 @@ export type EqSettings = {
   setBandGain(index: number, gain: number): void;
 };
 
+/** One settings store per storage instance — player row and settings section share state. */
+const settingsByStorage = new WeakMap<ExtensionStorage, EqSettings>();
+
 export function createEqSettings(storage: ExtensionStorage): EqSettings {
+  const cached = settingsByStorage.get(storage);
+  if (cached) return cached;
   let state = initialEqState(storage);
   const listeners = new Set<() => void>();
   const persist = () => {
@@ -177,7 +182,7 @@ export function createEqSettings(storage: ExtensionStorage): EqSettings {
     persist();
     notify();
   };
-  return {
+  const settings: EqSettings = {
     subscribe(cb) {
       listeners.add(cb);
       return () => {
@@ -202,6 +207,8 @@ export function createEqSettings(storage: ExtensionStorage): EqSettings {
       commit({ ...state, preset: "custom", gains });
     },
   };
+  settingsByStorage.set(storage, settings);
+  return settings;
 }
 
 export type EqController = {
@@ -246,12 +253,22 @@ export function createEqController(
   };
 }
 
-function EqSection({ settings }: { settings: EqSettings }): ReactElement {
-  const enabled = useSyncExternalStore(settings.subscribe, settings.getEnabled);
-  const preset = useSyncExternalStore(settings.subscribe, settings.getPreset);
+/** Settings section for the equalizer (player settings menu + settings screen). */
+export function EqSection({ settings }: { settings: EqSettings }): ReactElement {
+  const enabled = useSyncExternalStore(
+    settings.subscribe,
+    settings.getEnabled,
+    settings.getEnabled,
+  );
+  const preset = useSyncExternalStore(
+    settings.subscribe,
+    settings.getPreset,
+    settings.getPreset,
+  );
   const gains = useSyncExternalStore(
     settings.subscribe,
     // Readonly array identity changes only when gains are replaced.
+    () => settings.getGains() as readonly number[],
     () => settings.getGains() as readonly number[],
   );
   return (
