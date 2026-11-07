@@ -4,7 +4,8 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow, getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { playerFramesUrl } from "../playerApi";
 import type { PlayerExtension } from "./types";
-import { PIP_COMMAND, PIP_ERROR, PIP_INIT, PIP_LABEL, PIP_REQUEST, PIP_STATE, pipState } from "./pipProtocol";
+import { PIP_COMMAND, PIP_ERROR, PIP_INIT, PIP_LABEL, PIP_LAYOUT, PIP_REQUEST, PIP_STATE, pipState } from "./pipProtocol";
+import { parsePipFrameLayout } from "./pipVideoLayout";
 
 type Status = { open: boolean; pending: boolean; error: string | null };
 function Toggle({ subscribe, getStatus, toggle }: {
@@ -28,6 +29,14 @@ export const pipMiniPlayer: PlayerExtension = {
     let active = true;
     let pip: WebviewWindow | null = null;
     let generation = 0;
+    let layoutPending = false;
+    let layoutKey = "";
+    // Один запрос через существующий мост, без изменений frame-wire и Rust.
+    const readLayout = async () => {
+      try {
+        return parsePipFrameLayout(await ctx.mpv.command(["expand-text", "${osd-dimensions/w},${osd-dimensions/h},${osd-dimensions/ml},${osd-dimensions/mr},${osd-dimensions/mt},${osd-dimensions/mb}"]));
+      } catch { return null; }
+    };
     let status: Status = { open: false, pending: false, error: null };
     const listeners = new Set<() => void>();
     const stops: (() => void)[] = [];
@@ -49,8 +58,12 @@ export const pipMiniPlayer: PlayerExtension = {
       listen(PIP_REQUEST, async () => {
         if (!active || !pip) return;
         try {
-          const framesUrl = await playerFramesUrl();
-          if (active && pip) await emitTo(PIP_LABEL, PIP_INIT, { framesUrl, state: pipState(ctx.getSnapshot()) });
+          const requestGeneration = generation;
+          const [framesUrl, layout] = await Promise.all([playerFramesUrl(), readLayout()]);
+          if (active && pip && requestGeneration === generation) {
+            layoutKey = JSON.stringify(layout);
+            await emitTo(PIP_LABEL, PIP_INIT, { framesUrl, layout, state: pipState(ctx.getSnapshot()) });
+          }
         } catch (error) { fail(error); }
       }, { target: { kind: "WebviewWindow", label: "main" } }).then(keep),
       listen<unknown>(PIP_COMMAND, async ({ payload }) => {
@@ -101,6 +114,19 @@ export const pipMiniPlayer: PlayerExtension = {
     const stopSnapshot = ctx.onSnapshot(snapshot => {
       if (pip && status.open) void emitTo(PIP_LABEL, PIP_STATE, pipState(snapshot)).catch(() => {});
     });
+    const layoutTimer = setInterval(() => {
+      if (!active || !pip || !status.open || layoutPending) return;
+      const requestGeneration = generation;
+      layoutPending = true;
+      void readLayout().then(async layout => {
+        if (!active || !pip || requestGeneration !== generation) return;
+        const key = JSON.stringify(layout);
+        if (key !== layoutKey) {
+          layoutKey = key;
+          await emitTo(PIP_LABEL, PIP_LAYOUT, layout);
+        }
+      }).catch(() => {}).finally(() => { layoutPending = false; });
+    }, 500);
     const stopClose = ctx.onClose(close);
     const stopUi = ctx.ui.add("settings.menu", () => <Toggle
       subscribe={cb => { listeners.add(cb); return () => { listeners.delete(cb); }; }}
@@ -108,6 +134,7 @@ export const pipMiniPlayer: PlayerExtension = {
     />);
     return () => {
       active = false;
+      clearInterval(layoutTimer);
       close();
       stopSnapshot(); stopClose(); stopUi();
       stops.forEach(stop => stop());

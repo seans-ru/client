@@ -7,7 +7,8 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { CanvasVideoRenderer, FrameStream } from "../frameSink";
 import { formatTime } from "../playerHelpers";
 import { createExtensionStorage } from "./storage";
-import { PIP_COMMAND, PIP_ERROR, PIP_INIT, PIP_REQUEST, PIP_STATE, type PipCommand, type PipInit, type PipState } from "./pipProtocol";
+import { PIP_COMMAND, PIP_ERROR, PIP_INIT, PIP_LAYOUT, PIP_REQUEST, PIP_STATE, type PipCommand, type PipInit, type PipState } from "./pipProtocol";
+import { pipCanvasRect, type PipFrameLayout } from "./pipVideoLayout";
 import "./pipWindow.css";
 
 type Bounds = { x: number; y: number; width: number; height: number };
@@ -39,6 +40,20 @@ export function PipWindow() {
     const stops: (() => void)[] = [];
     const stream = new FrameStream();
     const renderer = new CanvasVideoRenderer(canvas.current!);
+    const element = canvas.current!;
+    let sourceLayout: PipFrameLayout | null = null;
+    let frameSize = { width: 0, height: 0 };
+    const applyLayout = () => {
+      const viewport = element.parentElement!;
+      const rect = pipCanvasRect({ width: viewport.clientWidth, height: viewport.clientHeight }, frameSize, sourceLayout);
+      if (!rect) return;
+      element.style.left = `${rect.left}px`;
+      element.style.top = `${rect.top}px`;
+      element.style.width = `${rect.width}px`;
+      element.style.height = `${rect.height}px`;
+    };
+    const resizeObserver = new ResizeObserver(applyLayout);
+    resizeObserver.observe(element.parentElement!);
     const current = getCurrentWebviewWindow();
     const storage = createExtensionStorage("pip-mini-player");
     let started = false;
@@ -59,14 +74,24 @@ export function PipWindow() {
         await listen<PipInit>(PIP_INIT, ({ payload }) => {
           if (!active) return;
           setState(payload.state);
+          sourceLayout = payload.layout;
+          applyLayout();
           setReady(true);
           if (started) return;
           started = true;
           void stream.connect(payload.framesUrl, frame => {
-            if (active) renderer.push(frame.width, frame.height, frame.pixels);
+            if (!active) return;
+            if (frameSize.width !== frame.width || frameSize.height !== frame.height) {
+              frameSize = { width: frame.width, height: frame.height };
+              applyLayout();
+            }
+            renderer.push(frame.width, frame.height, frame.pixels);
           }).catch(() => { if (active) setError("Не удалось получить видео. Откройте мини-плеер повторно."); });
         }, { target: { kind: "WebviewWindow", label: current.label } }).then(keep);
         await listen<PipState>(PIP_STATE, ({ payload }) => { if (active) setState(payload); }, { target: { kind: "WebviewWindow", label: current.label } }).then(keep);
+        await listen<PipFrameLayout | null>(PIP_LAYOUT, ({ payload }) => {
+          if (active) { sourceLayout = payload; applyLayout(); }
+        }, { target: { kind: "WebviewWindow", label: current.label } }).then(keep);
         await listen<string>(PIP_ERROR, ({ payload }) => { if (active) setError(payload); }, { target: { kind: "WebviewWindow", label: current.label } }).then(keep);
         const saved = storage.get<Bounds | null>("bounds", null);
         if (saved && [saved.x, saved.y, saved.width, saved.height].every(Number.isFinite) && saved.width >= 280 && saved.height >= 158) {
@@ -87,7 +112,7 @@ export function PipWindow() {
         if (active) { setError("Не удалось подключить мини-плеер. Закройте его и откройте снова."); await current.show().catch(() => {}); }
       }
     })();
-    return () => { active = false; clearTimeout(saveTimer); stops.forEach(stop => stop()); stream.close(); renderer.destroy(); };
+    return () => { active = false; clearTimeout(saveTimer); resizeObserver.disconnect(); stops.forEach(stop => stop()); stream.close(); renderer.destroy(); };
   }, []);
   const command = (value: PipCommand) => {
     setError(null);

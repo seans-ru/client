@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import type { PlayerExtensionContext } from "../src/features/player/extensions/types";
 import { DEFAULT_SNAPSHOT } from "../src/features/player/playerTypes";
-import { PIP_COMMAND } from "../src/features/player/extensions/pipProtocol";
+import { PIP_COMMAND, PIP_INIT, PIP_LABEL, PIP_REQUEST } from "../src/features/player/extensions/pipProtocol";
 
 const mock = vi.hoisted(() => ({
   events: new Map<string, (event: { payload: unknown }) => unknown>(),
@@ -35,6 +35,7 @@ function setup() {
   const transport = { togglePause: vi.fn(async () => {}), seek: vi.fn(async () => {}) };
   const ctx = {
     transport,
+    mpv: { command: async () => "1920,1200,0,0,60,60" },
     getSnapshot: () => ({ ...DEFAULT_SNAPSHOT, position: 42, duration: 100, file_loaded: true }),
     onSnapshot: () => () => {},
     onClose: (callback: () => void) => { sourceClosed = callback; return () => {}; },
@@ -73,6 +74,17 @@ describe("системное окно PiP", () => {
     const send = (position: unknown) => mock.events.get(PIP_COMMAND)!({ payload: { type: "seek", position } });
     await send(75); await send(-5); await send(120); await send(NaN); await send("60");
     expect(fixture.transport.seek.mock.calls).toEqual([[75], [0], [100]]);
+    fixture.dispose();
+  });
+  it("передаёт геометрию изображения mpv вместе с подключением потока кадров", async () => {
+    const fixture = setup(); fixture.toggle();
+    await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
+    await mock.events.get(PIP_REQUEST)!({ payload: null });
+    expect(mock.emit).toHaveBeenCalledWith(PIP_LABEL, PIP_INIT, {
+      framesUrl: "http://127.0.0.1:1234/frames",
+      state: { position: 42, duration: 100, pause: true },
+      layout: { width: 1920, height: 1200, left: 0, right: 0, top: 60, bottom: 60 },
+    });
     fixture.dispose();
   });
   it("отменяет незавершённое открытие при закрытии источника", async () => {
