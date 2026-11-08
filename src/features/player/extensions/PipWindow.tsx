@@ -9,6 +9,7 @@ import { formatTime } from "../playerHelpers";
 import { createExtensionStorage } from "./storage";
 import { PIP_COMMAND, PIP_ERROR, PIP_INIT, PIP_LAYOUT, PIP_REQUEST, PIP_STATE, type PipCommand, type PipInit, type PipState } from "./pipProtocol";
 import { pipCanvasRect, pipContentAspect, pipResizeFrame, PIP_MIN_WIDTH, PIP_MIN_HEIGHT, type PipFrameLayout, type PipResizeEdge } from "./pipVideoLayout";
+import { DEFAULT_DELAY_SEC, shouldHideChrome } from "./autoHidePolicy";
 import "./pipWindow.css";
 
 type Bounds = { x: number; y: number; width: number; height: number };
@@ -42,6 +43,28 @@ export function PipWindow() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scrub, setScrub] = useState<number | null>(null);
+  const [chromeHidden, setChromeHidden] = useState(false);
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const hoverChrome = useRef(false);
+  // Как в основном плеере: прячем только во время воспроизведения.
+  const hideable = ready && !error && scrub === null
+    && shouldHideChrome({ neverHide: false, fileLoaded: ready, pause: state.pause, eof: state.duration > 0 && state.position >= state.duration });
+  const hideableRef = useRef(hideable);
+  hideableRef.current = hideable;
+  const bumpChrome = () => {
+    setChromeHidden(false);
+    clearTimeout(idleTimer.current);
+    idleTimer.current = setTimeout(() => {
+      if (hideableRef.current && !hoverChrome.current) setChromeHidden(true);
+    }, DEFAULT_DELAY_SEC * 1000);
+  };
+  useEffect(() => {
+    if (hideable) bumpChrome();
+    else { clearTimeout(idleTimer.current); setChromeHidden(false); }
+    return () => clearTimeout(idleTimer.current);
+  }, [hideable]);
+  const onChromeEnter = () => { hoverChrome.current = true; clearTimeout(idleTimer.current); };
+  const onChromeLeave = () => { hoverChrome.current = false; bumpChrome(); };
   const contentAspect = useRef<number | null>(null);
   const drag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const resize = useRef<{ edge: PipResizeEdge; sx: number; sy: number; lx: number; ly: number; bounds: Bounds | null } | null>(null);
@@ -153,12 +176,15 @@ export function PipWindow() {
     if (scrub === null) return;
     command({ type: "seek", position });
     setScrub(null);
+    bumpChrome();
   };
   const onFreePointerDown = (event: ReactPointerEvent<HTMLElement>) => {
+    bumpChrome();
     if (event.button !== 0 || !isFreeArea(event.target)) return;
     drag.current = { x: event.clientX, y: event.clientY, moved: false };
   };
   const onFreePointerMove = (event: ReactPointerEvent<HTMLElement>) => {
+    bumpChrome();
     const attempt = drag.current;
     if (!attempt || attempt.moved) return;
     if (Math.abs(event.clientX - attempt.x) + Math.abs(event.clientY - attempt.y) < DRAG_THRESHOLD_PX) return;
@@ -169,11 +195,12 @@ export function PipWindow() {
     const attempt = drag.current;
     drag.current = null;
     if (attempt && !attempt.moved && ready) command("toggle-pause");
+    bumpChrome();
   };
 
   const displayedPosition = scrub ?? state.position;
   const percent = state.duration > 0 ? Math.max(0, Math.min(100, displayedPosition / state.duration * 100)) : 0;
-  return <main className="pip-window"
+  return <main className={`pip-window${chromeHidden ? " pip-chrome-hidden" : ""}`}
     onPointerDown={onFreePointerDown}
     onPointerMove={onFreePointerMove}
     onPointerUp={onFreePointerUp}
@@ -206,12 +233,14 @@ export function PipWindow() {
       onPointerCancel={() => { resize.current = null; }}
     />)}
     <button className="pip-close pip-icon" type="button" aria-label="Закрыть мини-плеер" title="Закрыть"
+      onPointerEnter={onChromeEnter} onPointerLeave={onChromeLeave}
       onClick={() => { void getCurrentWebviewWindow().close().catch(() => setError("Не удалось закрыть мини-плеер.")); }}>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
     </button>
     {!ready && !error && <p className="pip-status" role="status">Подключаем видео…</p>}
     {error && <p className="pip-status" role="alert">{error}</p>}
-    <div className="pip-controls" role="group" aria-label="Управление мини-плеером">
+    <div className="pip-controls" role="group" aria-label="Управление мини-плеером"
+      onPointerEnter={onChromeEnter} onPointerLeave={onChromeLeave}>
       <div className="pip-transport">
         <button className="pip-icon" type="button" disabled={!ready} onClick={() => command("toggle-pause")} aria-label={state.pause ? "Воспроизвести" : "Пауза"}><PlayPauseIcon paused={state.pause} /></button>
         <button className="pip-icon" type="button" disabled={!ready} onClick={() => command("back")} aria-label="Назад на 5 секунд"><SeekIcon forward={false} /></button>
