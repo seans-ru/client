@@ -5,7 +5,7 @@ import { WebviewWindow, getCurrentWebviewWindow } from "@tauri-apps/api/webviewW
 import { playerFramesUrl } from "../playerApi";
 import type { PlayerExtension } from "./types";
 import { PIP_COMMAND, PIP_ERROR, PIP_INIT, PIP_LABEL, PIP_LAYOUT, PIP_REQUEST, PIP_STATE, pipState } from "./pipProtocol";
-import { parsePipFrameLayout } from "./pipVideoLayout";
+import { parsePipFrameLayout, PIP_MIN_WIDTH, PIP_MIN_HEIGHT } from "./pipVideoLayout";
 import { pipPresentation } from "./pipPresentation";
 
 type Status = { open: boolean; pending: boolean; error: string | null };
@@ -101,7 +101,7 @@ export const pipMiniPlayer: PlayerExtension = {
         if (!active || opening !== generation) return;
         const created = new WebviewWindow(PIP_LABEL, {
           url: "index.html#/pip", title: "Seans — мини-плеер",
-          width: 480, height: 270, minWidth: 280, minHeight: 158,
+          width: 480, height: 270, minWidth: PIP_MIN_WIDTH, minHeight: PIP_MIN_HEIGHT,
           decorations: false, alwaysOnTop: true, resizable: true, center: true, visible: false,
           // Без parent: Windows скрывает owned-окно при сворачивании владельца.
         });

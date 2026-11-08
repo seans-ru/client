@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePipFrameLayout, pipCanvasRect } from "../src/features/player/extensions/pipVideoLayout";
+import { parsePipFrameLayout, pipCanvasRect, pipContentAspect, pipResizeFrame } from "../src/features/player/extensions/pipVideoLayout";
 
 const frame = { width: 1920, height: 1200 };
 const layout = { ...frame, left: 0, right: 0, top: 60, bottom: 60 };
@@ -41,5 +41,50 @@ describe("масштабирование изображения PiP", () => {
   it("проверяет полученные от mpv размеры и поля", () => {
     expect(parsePipFrameLayout("1920,1200,0,0,60,60")).toEqual(layout);
     for (const value of [null, "", "0,0,0,0,0,0", "1920,1200,-1,0,0,0", "1920,1200,960,960,0,0", "1920,1200,0,0,NaN,0", "1920,1200,0,0,0", "1920,1200,0,0,,0"]) expect(parsePipFrameLayout(value)).toBeNull();
+  });
+});
+
+describe("пропорции изображения", () => {
+  it("использует изображение без полей mpv", () => {
+    expect(pipContentAspect(frame, layout)).toBeCloseTo(1920 / 1080);
+  });
+  it("без геометрии берёт весь кадр, до кадра — null", () => {
+    expect(pipContentAspect(frame, null)).toBeCloseTo(1920 / 1200);
+    expect(pipContentAspect({ width: 0, height: 0 }, layout)).toBeNull();
+  });
+  it("игнорирует поля другого размера кадра", () => {
+    expect(pipContentAspect({ width: 1280, height: 720 }, layout)).toBeCloseTo(1280 / 720);
+  });
+});
+
+describe("resize окна с пропорциями изображения", () => {
+  const start = { x: 100, y: 50, width: 480, height: 240 };
+  const aspect = 2;
+
+  it("правый край тянет ширину, высота следует за пропорциями", () => {
+    expect(pipResizeFrame(start, { dx: 80, dy: 0 }, "East", aspect)).toEqual({ x: 100, y: 30, width: 560, height: 280 });
+  });
+  it("левый край сохраняет правую границу", () => {
+    const next = pipResizeFrame(start, { dx: -80, dy: 0 }, "West", aspect);
+    expect(next).toEqual({ x: 20, y: 30, width: 560, height: 280 });
+    expect(next.x + next.width).toBe(start.x + start.width);
+  });
+  it("верхний край сохраняет нижнюю границу", () => {
+    const next = pipResizeFrame(start, { dx: 0, dy: -40 }, "North", aspect);
+    expect(next).toEqual({ x: 60, y: 10, width: 560, height: 280 });
+    expect(next.y + next.height).toBe(start.y + start.height);
+  });
+  it("угол ведёт ось с большим относительным смещением", () => {
+    expect(pipResizeFrame(start, { dx: 80, dy: 4 }, "SouthEast", aspect)).toEqual({ x: 100, y: 50, width: 560, height: 280 });
+    expect(pipResizeFrame(start, { dx: 4, dy: 80 }, "SouthEast", aspect)).toEqual({ x: 100, y: 50, width: 640, height: 320 });
+  });
+  it("не даёт сжаться ниже минимума, сохраняя пропорции и опорный угол", () => {
+    const next = pipResizeFrame(start, { dx: 400, dy: 200 }, "NorthWest", aspect);
+    expect(next).toEqual({ x: 264, y: 132, width: 316, height: 158 });
+    expect(next.width / next.height).toBeCloseTo(aspect);
+  });
+  it("при неизвестных пропорциях сохраняет текущие", () => {
+    const next = pipResizeFrame(start, { dx: 40, dy: 0 }, "East", Number.NaN);
+    expect(next.width / next.height).toBeCloseTo(start.width / start.height);
   });
 });
