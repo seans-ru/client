@@ -217,6 +217,33 @@ describe("createFrameHub (throttled delivery)", () => {
     expect(seen2).toEqual([4]);
   });
 
+  it("notifies onReset listeners and honors unsubscribe", () => {
+    const hub = createFrameHub();
+    const calls: string[] = [];
+    const offA = hub.onReset(() => calls.push("a"));
+    hub.onReset(() => calls.push("b"));
+
+    hub.reset();
+    expect(calls).toEqual(["a", "b"]);
+
+    offA();
+    hub.reset();
+    expect(calls).toEqual(["a", "b", "b"]);
+  });
+
+  it("isolates a throwing onReset listener", () => {
+    const warns = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const hub = createFrameHub();
+    const calls: string[] = [];
+    hub.onReset(() => {
+      throw new Error("reset listener failed");
+    });
+    hub.onReset(() => calls.push("ok"));
+    expect(() => hub.reset()).not.toThrow();
+    expect(calls).toEqual(["ok"]);
+    warns.mockRestore();
+  });
+
   it("ignores publishes while nobody subscribes", () => {
     const hub = createFrameHub();
     expect(() => hub.publishFrame(makeFrame(1))).not.toThrow();
@@ -250,6 +277,7 @@ describe("frameHub singleton", () => {
   it("exposes the session hub API", () => {
     expect(typeof frameHub.publishFrame).toBe("function");
     expect(typeof frameHub.subscribe).toBe("function");
+    expect(typeof frameHub.onReset).toBe("function");
     expect(typeof frameHub.reset).toBe("function");
   });
 });

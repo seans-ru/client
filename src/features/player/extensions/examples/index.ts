@@ -11,10 +11,12 @@
 
 import type { PlayerExtension } from "../types";
 import { autoHide } from "../autoHide";
+import { ambientLight } from "../ambientLight";
 import { equalizer } from "../eq";
 import { volumeProcessor } from "../volumeProcessor";
 import { ambientLightStub } from "./ambientLightStub";
 import { constantVolumeStub } from "./constantVolumeStub";
+import { introDetectPilot } from "../introDetectPilot";
 import { pipMiniPlayer } from "../pipMiniPlayer";
 import { pictureQuality } from "../pictureQuality";
 import { hdr } from "../hdr";
@@ -24,10 +26,13 @@ export { ambientLightStub, constantVolumeStub, pipMiniPlayer };
 
 export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
   autoHide,
+  ambientLight,
   volumeProcessor,
   equalizer,
   pipMiniPlayer,
   pictureQuality,
   hdr,
   debandDenoise,
+  // Issue #16 spike: off by default, toggled in the player settings menu.
+  introDetectPilot,
 ];
