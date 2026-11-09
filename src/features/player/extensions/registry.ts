@@ -11,11 +11,13 @@
 
 import type { ReactNode } from "react";
 import type { PlayerSnapshot } from "../playerTypes";
+import { registerCommand as busRegisterCommand } from "./commands";
 import type {
   ExtensionStorage,
   ExtensionTransport,
   MpvBridge,
   OpenInfo,
+  PlayerCommand,
   PlayerExtension,
   PlayerExtensionContext,
   PlayerUiSlot,
@@ -94,6 +96,8 @@ function createSignal<T extends unknown[]>() {
 type ExtensionEntry = {
   ext: PlayerExtension;
   dispose: Unsubscribe | null;
+  /** Commands auto-dropped at dispose (issue #23). */
+  commandDisposers: Unsubscribe[];
 };
 
 /** Stable empty snapshot for `getSlotEntries` (referential identity). */
@@ -120,7 +124,7 @@ export function createExtensionRuntime(
     }
     seenIds.add(ext.id);
 
-    const entry: ExtensionEntry = { ext, dispose: null };
+    const entry: ExtensionEntry = { ext, dispose: null, commandDisposers: [] };
     entries.push(entry);
 
     const ctx: PlayerExtensionContext = {
@@ -165,6 +169,11 @@ export function createExtensionRuntime(
         setChromeHidden: (hidden) => deps.setChromeHidden(hidden),
       },
       storage: deps.storageFor(ext.id),
+      registerCommand: (command: PlayerCommand) => {
+        const off = busRegisterCommand(ext.id, command);
+        entry.commandDisposers.push(off);
+        return off;
+      },
     };
 
     try {
@@ -195,6 +204,15 @@ export function createExtensionRuntime(
             warn(entry.ext.id, error);
           }
         }
+        // Commands do not outlive their extension even if dispose forgot them.
+        for (const off of entry.commandDisposers) {
+          try {
+            off();
+          } catch (error) {
+            warn(entry.ext.id, error);
+          }
+        }
+        entry.commandDisposers.length = 0;
       }
       entries.length = 0;
       openSignal.clear();
