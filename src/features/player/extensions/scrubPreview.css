@@ -1,0 +1,43 @@
+/**
+ * Scrub-preview tooltip (issue #17). Lives in the `overlay` slot — absolute
+ * inside the overlay layer, just above the seek rail; `pointer-events: none`
+ * so it never steals hover from the rail.
+ */
+
+.player-scrub-preview {
+  position: absolute;
+  bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  transform: translateX(-50%);
+  padding: 6px;
+  border-radius: var(--radius-md, 8px);
+  background: rgba(15, 18, 24, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  /* Hoverable: moving onto the tooltip keeps it open (it floats above the
+     rail and must not steal seeks from it). */
+  pointer-events: auto;
+  z-index: 6;
+  white-space: nowrap;
+}
+
+.player-scrub-preview-img {
+  display: none;
+  width: 144px;
+  height: 81px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #000;
+  /* Source frames are stride samples (в‰¤32 px) — smooth upscale reads as a
+     soft thumbnail instead of blocky pixels. */
+  image-rendering: auto;
+}
+
+.player-scrub-preview-time {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #f4f4f5;
+}
