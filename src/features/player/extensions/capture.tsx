@@ -50,6 +50,7 @@ import {
   screenshotFileName,
   setMarkA,
   setMarkB,
+  sourceCodecs,
   SCREENSHOT_FORMATS,
   SCREENSHOT_FORMAT_LABELS,
   SCREENSHOT_MODES,
@@ -154,7 +155,7 @@ export function createMarksStore(): MarksStore {
 export type CaptureStatus =
   | { kind: "idle" }
   | { kind: "working"; label: string }
-  | { kind: "progress"; percent: number }
+  | { kind: "progress"; percent: number | null }
   | { kind: "done"; message: string; revealPath: string }
   | { kind: "fallback"; message: string }
   | { kind: "error"; message: string };
@@ -303,7 +304,8 @@ export function createCaptureController(deps: CaptureDeps): CaptureController {
       // Cancelled dialog — no toast.
       if (chosen == null) return;
       const outPath = ensureClipExtension(chosen, "mp4");
-      status.set({ kind: "progress", percent: 0 });
+      const { videoCodec, audioCodec } = sourceCodecs(snapshot.tracks);
+      status.set({ kind: "progress", percent: null });
       const stopProgress = native.onExportProgress((outTimeMs) => {
         status.set({
           kind: "progress",
@@ -316,6 +318,8 @@ export function createCaptureController(deps: CaptureDeps): CaptureController {
           start: current.a as number,
           end: current.b as number,
           outPath,
+          videoCodec,
+          audioCodec,
         });
       } finally {
         stopProgress();

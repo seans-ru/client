@@ -232,11 +232,38 @@ export function exportProgressPercent(
 }
 
 /** «Экспорт клипа… 45%» — the progress toast while ffmpeg runs. */
-export function exportingLabel(percent: number): string {
+export function exportingLabel(percent: number | null): string {
+  if (percent == null) return "Готовим экспорт…";
   const clamped = Number.isFinite(percent)
     ? Math.min(100, Math.max(0, Math.round(percent)))
     : 0;
   return `Экспорт клипа… ${clamped}%`;
+}
+
+/* ----------------------------------------------------------- source codecs */
+
+/** Track shape needed to pick the export codec strategy (issue #76). */
+export type CodecTrack = {
+  kind: string;
+  codec: string;
+  external: boolean;
+};
+
+/**
+ * Codecs of the streams the export maps (`0:v:0` / `0:a:0`): the first
+ * embedded video and audio tracks. Empty string when unknown — the Rust side
+ * then stream-copies. External (sidecar) tracks are not part of the source.
+ */
+export function sourceCodecs(tracks: readonly CodecTrack[]): {
+  videoCodec: string;
+  audioCodec: string;
+} {
+  const video = tracks.find((t) => t.kind === "video" && !t.external);
+  const audio = tracks.find((t) => t.kind === "audio" && !t.external);
+  return {
+    videoCodec: video?.codec ?? "",
+    audioCodec: audio?.codec ?? "",
+  };
 }
 
 /* -------------------------------------------------------------------- copy */

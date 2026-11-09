@@ -105,7 +105,42 @@ const EXPORT_PROGRESS_EVENT: &str = "capture://export-progress";
 /// `-ss` is an input seek (nearest keyframe ≤ start) and `-t` is the output
 /// duration — the unambiguous pair for a stream-copy cut (`-to` before `-i`
 /// means different things across ffmpeg versions).
-pub fn export_args(start: f64, end: f64, source: &str, out_path: &str) -> Vec<String> {
+/// Whether the source video bitstream may be stream-copied into the export
+/// container and still open in Windows' default player (issue #76): ffmpeg
+/// happily writes e.g. HEVC into MP4 (exit 0) and the file then will not open.
+/// MKV accepts every codec, so it always copies. Unknown codec → copy.
+pub fn video_is_copy_safe(codec: &str, mp4_target: bool) -> bool {
+    if !mp4_target {
+        return true;
+    }
+    matches!(
+        codec.trim().to_ascii_lowercase().as_str(),
+        "h264" | "avc" | "avc1" | ""
+    )
+}
+
+/// Same contract as [`video_is_copy_safe`] for audio: MP4 keeps only the
+/// codecs Windows Media Foundation decodes out of the box. FLAC/DTS/TrueHD/
+/// ALAC/Opus/Vorbis/PCM get re-encoded to AAC instead of a silent bad file.
+pub fn audio_is_copy_safe(codec: &str, mp4_target: bool) -> bool {
+    if !mp4_target {
+        return true;
+    }
+    matches!(
+        codec.trim().to_ascii_lowercase().as_str(),
+        "aac" | "mp3" | "mp4a" | "ac3" | "ac-3" | "eac3" | "eac-3" | "ec3" | "mp2" | ""
+    )
+}
+
+pub fn export_args(
+    start: f64,
+    end: f64,
+    source: &str,
+    out_path: &str,
+    video_codec: &str,
+    audio_codec: &str,
+) -> Vec<String> {
+    let mp4_target = is_mp4_path(out_path);
     let mut args: Vec<String> = vec![
         "-hide_banner".into(),
         "-nostdin".into(),
@@ -122,12 +157,27 @@ pub fn export_args(start: f64, end: f64, source: &str, out_path: &str) -> Vec<St
         "0:v:0".into(),
         "-map".into(),
         "0:a:0?".into(),
-        "-c".into(),
-        "copy".into(),
-        "-avoid_negative_ts".into(),
-        "make_zero".into(),
     ];
-    if is_mp4_path(out_path) {
+    if video_is_copy_safe(video_codec, mp4_target) {
+        args.push("-c:v".into());
+        args.push("copy".into());
+    } else {
+        // Re-encode to H.264 — the codec every Windows build plays from MP4.
+        args.extend(
+            ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
+                .into_iter()
+                .map(String::from),
+        );
+    }
+    if audio_is_copy_safe(audio_codec, mp4_target) {
+        args.push("-c:a".into());
+        args.push("copy".into());
+    } else {
+        args.extend(["-c:a", "aac", "-b:a", "192k"].into_iter().map(String::from));
+    }
+    args.push("-avoid_negative_ts".into());
+    args.push("make_zero".into());
+    if mp4_target {
         args.push("-movflags".into());
         args.push("+faststart".into());
     }
@@ -151,9 +201,20 @@ fn format_seconds(value: f64) -> String {
     s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-/// Parse one `-progress` line (`out_time=HH:MM:SS.uuuuuu`) into milliseconds.
+/// Parse one `-progress` line into milliseconds. Handles `out_time=HH:MM:SS`
+/// and the integer `out_time_us=` form; `out_time_ms=` is a deprecated ffmpeg
+/// alias that actually carries microseconds, so it is ignored in favour of the
+/// unambiguous forms.
 pub fn parse_out_time_ms(line: &str) -> Option<u64> {
-    let rest = line.trim().strip_prefix("out_time=")?;
+    let line = line.trim();
+    if let Some(rest) = line.strip_prefix("out_time_us=") {
+        let us: f64 = rest.trim().parse().ok()?;
+        if !us.is_finite() || us < 0.0 {
+            return None;
+        }
+        return Some((us / 1000.0).round() as u64);
+    }
+    let rest = line.strip_prefix("out_time=")?;
     let mut parts = rest.split(':');
     let hours: f64 = parts.next()?.parse().ok()?;
     let minutes: f64 = parts.next()?.parse().ok()?;
@@ -205,6 +266,8 @@ pub async fn capture_export_clip(
     start: f64,
     end: f64,
     out_path: String,
+    video_codec: String,
+    audio_codec: String,
 ) -> Result<(), CaptureError> {
     if source.trim().is_empty() {
         return Err(CaptureError::new("invalid-source", "нет источника видео"));
@@ -216,9 +279,19 @@ pub async fn capture_export_clip(
         return Err(CaptureError::new("invalid-range", "некорректный отрезок A→B"));
     }
 
-    tauri::async_runtime::spawn_blocking(move || run_export(app, source, start, end, out_path))
-        .await
-        .map_err(|e| CaptureError::new("join-failed", e.to_string()))?
+    tauri::async_runtime::spawn_blocking(move || {
+        run_export(
+            app,
+            source,
+            start,
+            end,
+            out_path,
+            &video_codec,
+            &audio_codec,
+        )
+    })
+    .await
+    .map_err(|e| CaptureError::new("join-failed", e.to_string()))?
 }
 
 fn run_export(
@@ -227,9 +300,11 @@ fn run_export(
     start: f64,
     end: f64,
     out_path: String,
+    video_codec: &str,
+    audio_codec: &str,
 ) -> Result<(), CaptureError> {
     let ffmpeg = resolve_ffmpeg(&app);
-    let args = export_args(start, end, &source, &out_path);
+    let args = export_args(start, end, &source, &out_path, video_codec, audio_codec);
 
     let mut child = Command::new(&ffmpeg)
         .args(&args)
@@ -297,30 +372,79 @@ fn run_export(
         return Err(CaptureError::new("ffmpeg-failed", detail));
     }
 
+    // ffmpeg can exit 0 without a usable file (issue #76) — never toast
+    // «done» until the artifact is really on disk.
+    let meta = std::fs::metadata(&out_path)
+        .map_err(|e| CaptureError::new("output-missing", format!("файл экспорта не создан: {e}")))?;
+    if meta.len() == 0 {
+        return Err(CaptureError::new("output-missing", "файл экспорта пуст"));
+    }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{export_args, format_seconds, parse_out_time_ms};
+    use super::{
+        audio_is_copy_safe, export_args, format_seconds, parse_out_time_ms, video_is_copy_safe,
+    };
 
     #[test]
     fn export_args_stream_copy_with_faststart_for_mp4() {
-        let args = export_args(10.0, 25.5, "https://cdn/x.mkv", "C:/out/clip.mp4");
+        let args = export_args(
+            10.0,
+            25.5,
+            "https://cdn/x.mkv",
+            "C:/out/clip.mp4",
+            "h264",
+            "aac",
+        );
         assert_eq!(args[0], "-hide_banner");
         assert!(args.windows(2).any(|w| w == ["-ss", "10"]));
         // Output duration, not an absolute end timestamp.
         assert!(args.windows(2).any(|w| w == ["-t", "15.5"]));
-        assert!(args.windows(2).any(|w| w == ["-c", "copy"]));
+        assert!(args.windows(2).any(|w| w == ["-c:v", "copy"]));
+        assert!(args.windows(2).any(|w| w == ["-c:a", "copy"]));
         assert!(args.windows(2).any(|w| w == ["-movflags", "+faststart"]));
         assert_eq!(args.last().map(String::as_str), Some("C:/out/clip.mp4"));
     }
 
     #[test]
     fn export_args_mkv_skips_faststart() {
-        let args = export_args(0.0, 1.0, "src", "clip.mkv");
+        let args = export_args(0.0, 1.0, "src", "clip.mkv", "hevc", "flac");
         assert!(!args.contains(&"faststart".to_string()) && !args.contains(&"+faststart".to_string()));
+        assert!(args.windows(2).any(|w| w == ["-c:v", "copy"]));
+        assert!(args.windows(2).any(|w| w == ["-c:a", "copy"]));
         assert_eq!(args.last().map(String::as_str), Some("clip.mkv"));
+    }
+
+    /// issue #76: ffmpeg stream-copies e.g. FLAC/HEVC into MP4 and the result
+    /// will not open in Windows — those codecs must be re-encoded instead.
+    #[test]
+    fn export_args_mp4_reencodes_unsafe_codecs() {
+        let args = export_args(0.0, 1.0, "src.mkv", "clip.mp4", "hevc", "flac");
+        assert!(args.windows(2).any(|w| w == ["-c:v", "libx264"]));
+        assert!(args.windows(2).any(|w| w == ["-c:a", "aac"]));
+        assert!(!args.windows(2).any(|w| w == ["-c:v", "copy"]));
+        assert!(!args.windows(2).any(|w| w == ["-c:a", "copy"]));
+    }
+
+    #[test]
+    fn codec_safety_policy() {
+        // MP4: only H.264 video and the Media Foundation audio set copy.
+        assert!(video_is_copy_safe("h264", true));
+        assert!(!video_is_copy_safe("hevc", true));
+        assert!(!video_is_copy_safe("vp9", true));
+        assert!(audio_is_copy_safe("aac", true));
+        assert!(audio_is_copy_safe("ac3", true));
+        assert!(audio_is_copy_safe("eac3", true));
+        assert!(!audio_is_copy_safe("flac", true));
+        assert!(!audio_is_copy_safe("dts", true));
+        assert!(!audio_is_copy_safe("truehd", true));
+        assert!(!audio_is_copy_safe("opus", true));
+        // MKV accepts everything — always copy.
+        assert!(video_is_copy_safe("hevc", false));
+        assert!(audio_is_copy_safe("truehd", false));
     }
 
     #[test]
@@ -335,7 +459,9 @@ mod tests {
     fn parses_progress_out_time() {
         assert_eq!(parse_out_time_ms("out_time=00:00:12.500000"), Some(12500));
         assert_eq!(parse_out_time_ms("out_time=01:02:03.250000"), Some(3723250));
+        // `out_time_ms` is the deprecated microsecond alias — ignored.
         assert_eq!(parse_out_time_ms("out_time_ms=12500"), None);
+        assert_eq!(parse_out_time_ms("out_time_us=1600000"), Some(1600));
         assert_eq!(parse_out_time_ms("frame=42"), None);
         assert_eq!(parse_out_time_ms("out_time=00:00:01"), Some(1000));
     }
