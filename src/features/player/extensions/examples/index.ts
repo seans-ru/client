@@ -10,8 +10,11 @@
  */
 
 import type { PlayerExtension } from "../types";
+import { audioRules } from "../audioRules";
 import { autoHide } from "../autoHide";
+import { dualSubs } from "../dualSubs";
 import { equalizer } from "../eq";
+import { geometry } from "../geometry";
 import { volumeProcessor } from "../volumeProcessor";
 import { ambientLightStub } from "./ambientLightStub";
 import { constantVolumeStub } from "./constantVolumeStub";
@@ -26,6 +29,9 @@ export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
   autoHide,
   volumeProcessor,
   equalizer,
+  audioRules,
+  dualSubs,
+  geometry,
   pipMiniPlayer,
   pictureQuality,
   hdr,
