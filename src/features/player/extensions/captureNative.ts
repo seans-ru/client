@@ -41,6 +41,9 @@ export type ExportClipArgs = {
   start: number;
   end: number;
   outPath: string;
+  /** Source stream codecs (mpv names) — decide copy vs re-encode (issue #76). */
+  videoCodec: string;
+  audioCodec: string;
 };
 
 export type CaptureNative = {
@@ -109,6 +112,8 @@ export function createCaptureNative(): CaptureNative {
         start: args.start,
         end: args.end,
         outPath: args.outPath,
+        videoCodec: args.videoCodec,
+        audioCodec: args.audioCodec,
       }).catch((error) => {
         throw toCaptureError(error, "export-failed");
       }),

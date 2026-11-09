@@ -24,6 +24,7 @@ import {
   screenshotFileName,
   setMarkA,
   setMarkB,
+  sourceCodecs,
   timestampStamp,
 } from "../src/features/player/extensions/captureHelpers";
 import {
@@ -112,13 +113,22 @@ type TestNative = {
     start: number;
     end: number;
     outPath: string;
+    videoCodec: string;
+    audioCodec: string;
   }) => Promise<void>;
   onExportProgress: (cb: (outTimeMs: number) => void) => () => void;
   reveal: (path: string) => Promise<void>;
   revealed: string[];
   dirChoices: Array<string | undefined>;
   clipChoices: string[];
-  exports: Array<{ source: string; start: number; end: number; outPath: string }>;
+  exports: Array<{
+    source: string;
+    start: number;
+    end: number;
+    outPath: string;
+    videoCodec: string;
+    audioCodec: string;
+  }>;
 };
 
 function makeNative(overrides: Partial<TestNative> = {}): TestNative {
@@ -159,6 +169,10 @@ function makeSnapshot(partial: Partial<PlayerSnapshot> = {}): PlayerSnapshot {
     position: 12.5,
     duration: 100,
     pause: true,
+    tracks: [
+      { id: 1, kind: "video", title: "", lang: "", codec: "h264", selected: true, external: false },
+      { id: 2, kind: "audio", title: "", lang: "", codec: "aac", selected: true, external: false },
+    ],
     ...partial,
   };
 }
@@ -371,10 +385,26 @@ describe("progress helpers", () => {
   });
 
   it("labels the export progress toast", () => {
+    expect(exportingLabel(null)).toBe("Готовим экспорт…");
     expect(exportingLabel(45)).toBe("Экспорт клипа… 45%");
     expect(exportingLabel(45.6)).toBe("Экспорт клипа… 46%");
     expect(exportingLabel(200)).toBe("Экспорт клипа… 100%");
     expect(exportingLabel(Number.NaN)).toBe("Экспорт клипа… 0%");
+  });
+
+  it("picks the embedded stream codecs the export maps", () => {
+    expect(
+      sourceCodecs([
+        { kind: "video", codec: "hevc", external: false },
+        { kind: "audio", codec: "flac", external: false },
+        { kind: "audio", codec: "ac3", external: true },
+      ]),
+    ).toEqual({ videoCodec: "hevc", audioCodec: "flac" });
+    // Sidecar audio is not part of the source file — skipped.
+    expect(
+      sourceCodecs([{ kind: "audio", codec: "ac3", external: true }]),
+    ).toEqual({ videoCodec: "", audioCodec: "" });
+    expect(sourceCodecs([])).toEqual({ videoCodec: "", audioCodec: "" });
   });
 });
 
@@ -553,6 +583,8 @@ describe("capture controller: clip export", () => {
         start: 12,
         end: 30,
         outPath: "C:\\Users\\t\\Pictures\\Seans\\seans-clip-test.mp4",
+        videoCodec: "h264",
+        audioCodec: "aac",
       },
     ]);
     const done = status.get();
