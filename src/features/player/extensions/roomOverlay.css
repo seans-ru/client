@@ -1,0 +1,180 @@
+/**
+ * Room extension overlays (issues #27/#30/#31): sync badge, lag prompt,
+ * lobby card, toasts and the track-mode hints. Token-only styling — rendered
+ * into the player `overlay` / `settings.menu` slots.
+ */
+
+.room-ext-sync-badge {
+  align-self: flex-end;
+  padding: var(--space-1, 4px) var(--space-3, 12px);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--text-sm);
+  backdrop-filter: blur(6px);
+}
+
+.room-ext-sync-lag {
+  border-color: color-mix(in srgb, var(--warning, #d97706) 60%, transparent);
+  color: var(--warning, #d97706);
+}
+
+.room-ext-lag-prompt {
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+  align-items: center;
+  padding: var(--space-3, 12px) var(--space-4, 16px);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-align: center;
+  max-width: min(420px, 80%);
+}
+
+.room-ext-lag-text {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.room-ext-lag-actions {
+  display: flex;
+  gap: var(--space-2, 8px);
+}
+
+.room-ext-btn {
+  padding: var(--space-1, 4px) var(--space-3, 12px);
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.room-ext-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg, #fff);
+}
+
+.room-ext-lobby {
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+  width: min(360px, 100%);
+  padding: var(--space-4, 16px);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.room-ext-lobby-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2, 8px);
+}
+
+.room-ext-lobby-title {
+  margin: 0;
+  font-size: var(--text-md, 15px);
+  font-weight: 700;
+}
+
+.room-ext-lobby-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  font-size: var(--text-sm);
+}
+
+.room-ext-member-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+}
+
+.room-ext-member {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  font-size: var(--text-sm);
+}
+
+.room-ext-avatar {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.room-ext-member-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-ext-status {
+  flex-shrink: 0;
+  padding: 2px var(--space-2, 8px);
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.room-ext-status-ready {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  color: var(--accent);
+}
+
+.room-ext-status-off {
+  opacity: 0.75;
+}
+
+.room-ext-lobby-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--warning, #d97706);
+}
+
+.room-ext-lobby-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px);
+}
+
+.room-ext-toasts {
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+  pointer-events: none;
+}
+
+.room-ext-toast {
+  padding: var(--space-1, 4px) var(--space-3, 12px);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
