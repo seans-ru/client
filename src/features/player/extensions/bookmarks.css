@@ -1,0 +1,111 @@
+/**
+ * Bookmarks UI (issue #21): quick-add button, menu/sidecar lists, note input.
+ * Tokens follow player.css; no new design dependencies.
+ */
+
+.player-bookmark-quick {
+  position: relative;
+}
+
+.player-bookmark-quick-flash {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 3px;
+  border-radius: 6px;
+  background: #22c55e;
+  color: #052e16;
+}
+
+.player-bookmark-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.player-bookmark-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.player-bookmark-jump {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+}
+
+.player-bookmark-jump:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+}
+
+.player-bookmark-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent, #8b5cf6);
+  flex: 0 0 auto;
+}
+
+.player-bookmark-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-muted, #a1a1aa);
+}
+
+.player-bookmark-note-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border, #3f3f46);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+}
+
+.player-bookmark-action {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-muted, #a1a1aa);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.player-bookmark-action:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  color: var(--ink, #fafafa);
+}
+
+.player-bookmark-message {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--ink-muted, #a1a1aa);
+}
+
+.player-bookmark-warning {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #f59e0b;
+}
