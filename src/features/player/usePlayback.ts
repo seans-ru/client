@@ -16,10 +16,14 @@ import type {
 import type { ApiId } from "../../api/types";
 import {
   audioPrefKey,
+  classifyAudioKind,
   formatPlaybackAudioLabel,
   loadAudioPreference,
+  loadAudioRuleKind,
+  noteAudioPick,
   resolvePreferredAudioTrack,
   saveAudioPreference,
+  type AudioRuleKind,
 } from "./audioTrackHelpers";
 import {
   catalogEpisodes,
@@ -95,6 +99,10 @@ export function usePlayback(
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [selectedAudioId, setSelectedAudioId] = useState<string | null>(null);
+  /** Track picked explicitly in this session (issue #9: wins over rules). */
+  const [explicitAudioId, setExplicitAudioId] = useState<string | null>(null);
+  /** User rule from `seans.audio.rule` (issue #9), loaded per unit change. */
+  const [ruleKind, setRuleKind] = useState<AudioRuleKind | null>(null);
   /** Series list from `GET /api/media/{id}/episodes` when playback omits `catalog`. */
   const [episodesCatalog, setEpisodesCatalog] =
     useState<PlaybackCatalog | null>(null);
@@ -108,6 +116,8 @@ export function usePlayback(
   useEffect(() => {
     if (!mediaKey || !fileKey) {
       setSelectedAudioId(null);
+      setExplicitAudioId(null);
+      setRuleKind(null);
       return;
     }
     const key = audioPrefKey({
@@ -119,6 +129,9 @@ export function usePlayback(
       loadAudioPreference(key) ??
       loadAudioPreference(audioPrefKey({ kind: "movie", mediaId: mediaKey }));
     setSelectedAudioId(saved);
+    // A new unit drops the in-session pick and re-reads the user rule.
+    setExplicitAudioId(null);
+    setRuleKind(loadAudioRuleKind());
   }, [mediaKey, fileKey]);
 
   const fetchOnce = useCallback(
@@ -256,14 +269,19 @@ export function usePlayback(
   );
 
   const selectedAudio = useMemo(() => {
+    // Issue #9 priority: explicit in-session → rule → remembered → default.
     return resolvePreferredAudioTrack(audioTracks, {
+      preferredId: explicitAudioId,
       savedId: selectedAudioId,
+      rule: ruleKind,
     });
-  }, [audioTracks, selectedAudioId]);
+  }, [audioTracks, selectedAudioId, explicitAudioId, ruleKind]);
 
   const selectAudio = useCallback(
     (trackId: string | number) => {
-      setSelectedAudioId(String(trackId));
+      const id = String(trackId);
+      setSelectedAudioId(id);
+      setExplicitAudioId(id);
       if (!mediaKey || !fileKey) return;
       // Default product scope: per-episode (movie shares the same key shape).
       saveAudioPreference(
@@ -278,8 +296,12 @@ export function usePlayback(
         audioPrefKey({ kind: "movie", mediaId: mediaKey }),
         trackId,
       );
+      // Smart memory (issue #9): remember the pick kind for the one-shot
+      // «сделать постоянным» offer (2+ same-kind picks in one series).
+      const picked = audioTracks.find((t) => String(t.id) === id) ?? null;
+      if (picked) noteAudioPick(mediaKey, classifyAudioKind(picked));
     },
-    [mediaKey, fileKey],
+    [mediaKey, fileKey, audioTracks],
   );
 
   const episodes = useMemo(() => catalogEpisodes(catalog), [catalog]);
