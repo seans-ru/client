@@ -1,0 +1,25 @@
+/* Shared extension toasts (`toast.tsx`) — floating above the transport. */
+
+.player-ext-toast-stack {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--player-transport-h, 79px) + var(--space-6));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  z-index: 9;
+  pointer-events: none;
+}
+
+.player-ext-toast {
+  padding: var(--space-2) var(--space-4);
+  background: rgba(8, 9, 12, 0.88);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  box-shadow: var(--shadow-1);
+  white-space: nowrap;
+}

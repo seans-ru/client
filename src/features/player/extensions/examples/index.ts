@@ -19,10 +19,15 @@ import { pipMiniPlayer } from "../pipMiniPlayer";
 import { pictureQuality } from "../pictureQuality";
 import { hdr } from "../hdr";
 import { debandDenoise } from "../debandDenoise";
+import { commandPalette } from "../commandPalette";
+import { statsOverlay } from "../statsOverlay";
+import { keyboardNav } from "../keyboardNav";
+import { toastHost } from "../toast";
 
 export { ambientLightStub, constantVolumeStub, pipMiniPlayer };
 
 export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
+  toastHost,
   autoHide,
   volumeProcessor,
   equalizer,
@@ -30,4 +35,7 @@ export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
   pictureQuality,
   hdr,
   debandDenoise,
+  commandPalette,
+  statsOverlay,
+  keyboardNav,
 ];

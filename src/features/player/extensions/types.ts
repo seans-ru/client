@@ -11,6 +11,19 @@ import type { PlayerSnapshot } from "../playerTypes";
 
 export type Unsubscribe = () => void;
 
+/** Palette command (issue #23) — see `commands.ts` for the bus. */
+export type PlayerCommand = {
+  /** Stable id — hotkey map keys, recent-command list. */
+  id: string;
+  /** Russian title shown in the palette and the hotkey table. */
+  title: string;
+  /** Group label in the palette («Воспроизведение», «Звук», …). */
+  category?: string;
+  /** Extra search terms (Russian + English aliases). */
+  keywords?: string[];
+  run: () => void | Promise<void>;
+};
+
 /** Chrome regions where extensions may contribute UI. */
 export type PlayerUiSlot =
   | "controls.primary" // left button cluster near the seek bar
@@ -82,6 +95,13 @@ export type PlayerExtensionContext = {
     setChromeHidden(hidden: boolean): void;
   };
   readonly storage: ExtensionStorage;
+  /**
+   * Register a command palette / hotkey action (issue #23). The command is
+   * listed in the palette and can be bound to a key in the hotkey table.
+   * Commands are auto-dropped at dispose; the returned unsubscribe is for
+   * early removal.
+   */
+  registerCommand(command: PlayerCommand): Unsubscribe;
 };
 
 export type PlayerExtension = {
