@@ -16,6 +16,7 @@ import { equalizer } from "../eq";
 import { volumeProcessor } from "../volumeProcessor";
 import { ambientLightStub } from "./ambientLightStub";
 import { constantVolumeStub } from "./constantVolumeStub";
+import { introDetectPilot } from "../introDetectPilot";
 import { pipMiniPlayer } from "../pipMiniPlayer";
 import { pictureQuality } from "../pictureQuality";
 import { hdr } from "../hdr";
@@ -32,4 +33,6 @@ export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
   pictureQuality,
   hdr,
   debandDenoise,
+  // Issue #16 spike: off by default, toggled in the player settings menu.
+  introDetectPilot,
 ];
