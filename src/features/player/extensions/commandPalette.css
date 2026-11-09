@@ -1,0 +1,205 @@
+/**
+ * Command palette modal + hotkey table (issue #23). The modal is viewport
+ * fixed inside the bottom-anchored overlay slot — it must cover the video.
+ */
+
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: min(14vh, 120px);
+  background: rgba(8, 9, 12, 0.55);
+  z-index: 10;
+  pointer-events: auto;
+}
+
+.palette-modal {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(420px, 70vh);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  color: var(--ink);
+}
+
+.palette-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  color: var(--ink);
+  font-size: var(--text-md);
+  outline: none;
+}
+
+.palette-input:focus-visible {
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: var(--focus-offset);
+}
+
+.palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.palette-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.palette-item:hover,
+.palette-item-active {
+  background: var(--accent-soft);
+}
+
+.palette-item:focus-visible {
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: var(--focus-offset);
+}
+
+.palette-item-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-item-category {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.palette-item-key {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.palette-empty {
+  margin: var(--space-3) 0;
+  color: var(--ink-muted);
+  text-align: center;
+  font-size: var(--text-sm);
+}
+
+.palette-hint {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+/* --------------------------------------------------------- hotkey table */
+
+.palette-hotkey-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.palette-hotkey-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.palette-hotkey-key {
+  flex: 0 0 auto;
+  min-width: 88px;
+  padding: 3px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  text-align: center;
+}
+
+.palette-hotkey-key:hover {
+  border-color: var(--accent);
+}
+
+.palette-hotkey-key-capturing {
+  border-color: var(--accent);
+  color: var(--accent);
+  animation: palette-capture-pulse 1s ease-in-out infinite;
+}
+
+@keyframes palette-capture-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.palette-hotkey-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--ink);
+}
+
+.palette-hotkey-reset {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.palette-hotkey-reset:hover {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+
+.palette-conflict {
+  margin: 0 0 var(--space-1);
+  color: var(--danger);
+  font-size: var(--text-xs);
+}
