@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createInitialRoomState,
+  isRoomStarted,
   roomReducer,
 } from "../src/features/rooms/roomReducer";
 import type { RoomAction, RoomState } from "../src/features/rooms/roomReducer";
@@ -194,5 +195,161 @@ describe("roomReducer errors", () => {
       },
     ]);
     expect(state.position).toBe(0);
+  });
+});
+
+describe("roomReducer room-sync additions (#27/#30/#31)", () => {
+  it("member_ready tracks readiness and buffered-ahead per member", () => {
+    const state = apply([
+      { type: "member_joined", user: { user_id: "u2", name: "Boris" } },
+      {
+        type: "member_ready",
+        user: { user_id: "u2", name: "Boris" },
+        ready: true,
+        bufferedAhead: 12,
+      },
+    ]);
+    expect(state.presence["u2"]).toEqual({ ready: true, bufferedAhead: 12 });
+    expect(state.members).toContainEqual({ userId: "u2", name: "Boris" });
+  });
+
+  it("member_ready keeps the previous buffered value when absent", () => {
+    const state = apply([
+      {
+        type: "member_ready",
+        user: { user_id: "u2" },
+        ready: true,
+        bufferedAhead: 12,
+      },
+      { type: "member_ready", user: { user_id: "u2" }, ready: false },
+    ]);
+    expect(state.presence["u2"]).toEqual({ ready: false, bufferedAhead: 12 });
+  });
+
+  it("member_joined seeds unknown presence, member_left drops it", () => {
+    let state = apply([
+      { type: "member_joined", user: { user_id: "u2", name: "Boris" } },
+    ]);
+    expect(state.presence["u2"]).toEqual({ ready: null, bufferedAhead: null });
+    state = roomReducer(state, {
+      type: "member_left",
+      user: { user_id: "u2" },
+    });
+    expect(state.presence["u2"]).toBeUndefined();
+  });
+
+  it("set_tracks stores host tracks and track_mode switches modes", () => {
+    const state = apply([
+      { type: "set_tracks", audioId: 3, subId: null, by: "host" },
+      { type: "track_mode", mode: "free", by: "host" },
+    ]);
+    expect(state.hostTracks).toEqual({ audioId: 3, subId: null });
+    expect(state.trackMode).toBe("free");
+  });
+
+  it("defaults to the synchronous-from-host track mode", () => {
+    expect(createInitialRoomState().trackMode).toBe("host");
+    expect(createInitialRoomState().hostTracks).toBeNull();
+  });
+
+  it("sync stores a timestamped drift reference without touching isPlaying", () => {
+    const state = apply([
+      { type: "state", action: "pause", position: 5, by: "h" },
+      { type: "sync", position: 42, by: "h", receivedAt: 1000 },
+    ]);
+    expect(state.isPlaying).toBe(false);
+    expect(state.position).toBe(42);
+    expect(state.syncTarget).toEqual({
+      position: 42,
+      isPlaying: false,
+      receivedAt: 1000,
+    });
+  });
+
+  it("state and room_state stamp the sync target when receivedAt is known", () => {
+    let state = apply([
+      {
+        type: "state",
+        action: "play",
+        position: 10,
+        by: "h",
+        receivedAt: 500,
+      },
+    ]);
+    expect(state.syncTarget).toEqual({
+      position: 10,
+      isPlaying: true,
+      receivedAt: 500,
+    });
+    state = roomReducer(state, {
+      type: "room_state",
+      hostId: "h",
+      position: 20,
+      isPlaying: true,
+      receivedAt: 900,
+    });
+    expect(state.syncTarget).toEqual({
+      position: 20,
+      isPlaying: true,
+      receivedAt: 900,
+    });
+  });
+
+  it("room_state without receivedAt keeps the previous sync target", () => {
+    const state = apply([
+      { type: "sync", position: 4, by: "h", receivedAt: 7 },
+      {
+        type: "room_state",
+        hostId: "h",
+        position: 9,
+        isPlaying: true,
+      },
+    ]);
+    expect(state.syncTarget).toEqual({
+      position: 4,
+      isPlaying: false,
+      receivedAt: 7,
+    });
+  });
+
+  it("started flips on play and on an already-playing room_state", () => {
+    let state = apply([
+      { type: "state", action: "pause", position: 0, by: "h" },
+    ]);
+    expect(state.started).toBe(false);
+    state = roomReducer(state, {
+      type: "state",
+      action: "play",
+      position: 0,
+      by: "h",
+    });
+    expect(state.started).toBe(true);
+
+    const joined = apply([
+      {
+        type: "room_state",
+        hostId: "h",
+        position: 90,
+        isPlaying: false,
+      },
+    ]);
+    expect(joined.started).toBe(true);
+  });
+
+  it("started action marks the local start (host force-start)", () => {
+    const state = apply([{ type: "started" }]);
+    expect(state.started).toBe(true);
+  });
+});
+
+describe("isRoomStarted", () => {
+  it("is false for a paused room at the beginning", () => {
+    expect(isRoomStarted({ isPlaying: false, position: 0 })).toBe(false);
+    expect(isRoomStarted({ isPlaying: false, position: 3 })).toBe(false);
+  });
+
+  it("is true while playing or past the opening seconds", () => {
+    expect(isRoomStarted({ isPlaying: true, position: 0 })).toBe(true);
+    expect(isRoomStarted({ isPlaying: false, position: 3.1 })).toBe(true);
   });
 });
