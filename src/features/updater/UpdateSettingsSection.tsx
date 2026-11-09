@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import { Button, ProgressBar } from "../../design/primitives";
+import { formatAppVersionLabel } from "../../lib/buildInfo";
 import { formatBytes } from "../../lib/format";
 import { downloadPercent, updatePhaseLabel } from "./updatePolicy";
 import { useUpdater } from "./UpdaterProvider";
@@ -48,7 +49,7 @@ export function UpdateSettingsSection() {
       <div className="settings-panel-heading">
         <strong>Обновления</strong>
         <p className="hint">
-          Версия приложения: {appVersion ?? "недоступна"}.
+          Версия приложения: {formatAppVersionLabel(appVersion, import.meta.env.VITE_APP_COMMIT ?? "")}.
           {availableVersion ? ` Доступна версия ${availableVersion}.` : ""}
         </p>
       </div>
