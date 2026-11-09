@@ -30,6 +30,8 @@ import {
   serverMessageToAction,
 } from "./roomMessages";
 import type { ServerRoomMessage } from "./roomMessages";
+import { parseRoomSocialMessage } from "./roomSocial";
+import type { RoomSocialSocketWiring } from "./roomSocial";
 import { createInitialRoomState, roomReducer } from "./roomReducer";
 import type {
   RoomAction,
@@ -63,6 +65,11 @@ export type UseRoomSocketOptions = {
   initialHostId?: string | number | null;
   /** Bump to force a reconnect (same code/url). */
   reconnectToken?: number;
+  /**
+   * Social channel (issues #28/#29): receives `reaction` / `chat` /
+   * `room_settings` frames and sends them over the same socket.
+   */
+  social?: RoomSocialSocketWiring | null;
 };
 
 export type UseRoomSocketResult = {
@@ -89,6 +96,7 @@ export function useRoomSocket(options: UseRoomSocketOptions): UseRoomSocketResul
     initialMembers,
     initialHostId = null,
     reconnectToken = 0,
+    social = null,
   } = options;
 
   const [state, setState] = useState<RoomState>(() =>
@@ -113,6 +121,8 @@ export function useRoomSocket(options: UseRoomSocketOptions): UseRoomSocketResul
   applyRemoteRef.current = options.applyRemote;
   const selfUserIdRef = useRef(selfUserId);
   selfUserIdRef.current = selfUserId;
+  const socialRef = useRef(social);
+  socialRef.current = social;
 
   const wsRef = useRef<WebSocket | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -214,8 +224,15 @@ export function useRoomSocket(options: UseRoomSocketOptions): UseRoomSocketResul
 
     ws.onmessage = (event) => {
       if (cancelled) return;
-      const message = parseRoomMessage(String(event.data ?? ""));
-      if (!message) return;
+      const raw = String(event.data ?? "");
+      const message = parseRoomMessage(raw);
+      if (!message) {
+        // Social frames (issues #28/#29) are a backward-compatible extension:
+        // servers without them never reach this branch.
+        const socialMessage = parseRoomSocialMessage(raw);
+        if (socialMessage) socialRef.current?.receive(socialMessage);
+        return;
+      }
       dispatch(serverMessageToAction(message));
       // Host id may have just arrived on this frame — prefer it for the decision.
       const hostId =
@@ -226,6 +243,9 @@ export function useRoomSocket(options: UseRoomSocketOptions): UseRoomSocketResul
     ws.onerror = () => {
       // `onclose` always follows; the close code path is the single error source.
     };
+
+    // Social channel sends through the same live socket (issues #28/#29).
+    socialRef.current?.attach(sendRaw);
 
     ws.onclose = (event) => {
       if (cancelled) return;
@@ -242,6 +262,7 @@ export function useRoomSocket(options: UseRoomSocketOptions): UseRoomSocketResul
     return () => {
       cancelled = true;
       clearHeartbeat();
+      socialRef.current?.attach(null);
       // Never abort a CONNECTING socket — the browser logs
       // "WebSocket is closed before the connection is established" and the
       // server sees a half-open peer (React StrictMode does this on purpose).
