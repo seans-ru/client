@@ -19,6 +19,9 @@ import { usePlayerExtensions } from "../features/player/usePlayerExtensions";
 import { PlayerSlotsProvider } from "../features/player/extensions/slots";
 import type { ExtensionRuntime } from "../features/player/extensions/registry";
 import type {
+  RoomSocialPort,
+} from "../features/player/extensions/types";
+import type {
   RoomTransport,
   RoomTransportAction,
 } from "../features/player/useGuardedTransport";
@@ -50,6 +53,7 @@ export function PlayerScreen({
   transportRef,
   sidecarExtra,
   room,
+  roomSocial,
 }: {
   fileId: string;
   startAt?: number | null;
@@ -63,6 +67,8 @@ export function PlayerScreen({
   sidecarExtra?: ReactNode;
   /** Discord RPC: room party (code + member count) for the Join button. */
   room?: DiscordRoomInfo | null;
+  /** Room social channel (issues #28/#29) for player extensions. */
+  roomSocial?: RoomSocialPort | null;
 }) {
   const player = usePlayer();
   const intro = useTheIntroDb(fileId);
@@ -159,6 +165,7 @@ export function PlayerScreen({
   const extRuntime = usePlayerExtensions({
     transport: playerWithHistory,
     snapshot: player.snapshot,
+    room: roomSocial ?? null,
   });
   extRuntimeRef.current = extRuntime;
 

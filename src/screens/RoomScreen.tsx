@@ -6,15 +6,21 @@
  * Create path is unchanged (Library «Создать комнату» lands on this route).
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ROOM_CODE_PATTERN } from "../lib/deepLink";
-import { ROUTES } from "../lib/routeResolver";
+import { consumeRoomStartAt, ROUTES } from "../lib/routeResolver";
 import { ErrorSlot, LoadingSlot } from "../design/slots";
 import { Button } from "../design/primitives";
 import { useAuth } from "../features/auth";
 import { PlayerScreen } from "./PlayerScreen";
 import type { RoomTransport, RoomTransportAction } from "./PlayerScreen";
-import { RoomPanel, roomCloseMessage, useRoomDetail, useRoomSocket } from "../features/rooms";
+import {
+  RoomPanel,
+  roomCloseMessage,
+  useRoomDetail,
+  useRoomSocket,
+} from "../features/rooms";
+import { createRoomSocialStore } from "../features/rooms/roomSocial";
 import "../features/rooms/room.css";
 
 function navigate(hash: string): void {
@@ -40,6 +46,16 @@ export function RoomScreen({ code }: { code: string }) {
 
   const [reloadToken, setReloadToken] = useState(0);
   const [reconnectToken, setReconnectToken] = useState(0);
+
+  // Social channel (issues #28/#29): reactions + chat over the room socket.
+  const social = useMemo(() => createRoomSocialStore(), []);
+
+  // `?t=` moment from a room deep link (issue #29) — consumed once per entry.
+  const startAtRef = useRef<number | null | undefined>(undefined);
+  if (startAtRef.current === undefined) {
+    startAtRef.current = consumeRoomStartAt(code);
+  }
+  const startAt = startAtRef.current ?? null;
 
   const { detail, status: detailStatus, error: detailError, notFound } =
     useRoomDetail(code, valid, reloadToken);
@@ -82,6 +98,7 @@ export function RoomScreen({ code }: { code: string }) {
     initialMembers,
     initialHostId,
     reconnectToken,
+    social,
   });
 
   // `sendState` is stable; keep a ref so `onTransport` identity stays constant.
@@ -89,6 +106,16 @@ export function RoomScreen({ code }: { code: string }) {
   sendStateRef.current = room.sendState;
   const isHostRef = useRef(room.isHost);
   isHostRef.current = room.isHost;
+
+  // Social channel identity (issues #28/#29): local user + live host check.
+  useEffect(() => {
+    social.setRoomCode(code);
+    social.setIdentity({
+      selfUserId: selfUserId != null ? String(selfUserId) : null,
+      selfName: user?.display_name ?? null,
+      isHost: () => isHostRef.current,
+    });
+  }, [social, code, selfUserId, user?.display_name]);
 
   // Protocol: only the host broadcasts `state`. Guests apply remote frames
   // and send heartbeats; their local controls must not emit `state`.
@@ -193,10 +220,12 @@ export function RoomScreen({ code }: { code: string }) {
       <div className="room-player-slot">
         <PlayerScreen
           fileId={fileId}
+          startAt={startAt}
           roomMode
           onTransport={handleTransport}
           transportRef={transportRef}
           room={{ code, members: room.state.members.length }}
+          roomSocial={social}
           sidecarExtra={
             <RoomPanel
               code={code}

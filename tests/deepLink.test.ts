@@ -21,6 +21,7 @@ describe("parseDeepLink", () => {
     expect(parseDeepLink("seans:///room/ABCD2345")).toEqual({
       kind: "room",
       roomCode: "ABCD2345",
+      startAt: null,
     });
   });
 
@@ -65,6 +66,7 @@ describe("parseDeepLink", () => {
     expect(parseDeepLink("seans://room/ABCD2345")).toEqual({
       kind: "room",
       roomCode: "ABCD2345",
+      startAt: null,
     });
   });
 
@@ -72,6 +74,7 @@ describe("parseDeepLink", () => {
     expect(parseDeepLink("seans://room/23456789")).toEqual({
       kind: "room",
       roomCode: "23456789",
+      startAt: null,
     });
   });
 
@@ -85,10 +88,12 @@ describe("parseDeepLink", () => {
     expect(parseDeepLink("seans://room/ABCD234O")).toEqual({
       kind: "room",
       roomCode: "ABCD234O",
+      startAt: null,
     });
     expect(parseDeepLink("seans://room/ABCD234I")).toEqual({
       kind: "room",
       roomCode: "ABCD234I",
+      startAt: null,
     });
   });
 
@@ -124,6 +129,43 @@ describe("parseDeepLink", () => {
     expect(parseDeepLink("seans://[")).toBeNull();
     expect(parseDeepLink("::::")).toBeNull();
   });
+
+  it("parses a moment link with ?t= startAt", () => {
+    expect(parseDeepLink("seans://room/ABCD2345?t=754")).toEqual({
+      kind: "room",
+      roomCode: "ABCD2345",
+      startAt: 754,
+    });
+    expect(parseDeepLink("seans:///room/ABCD2345?t=754.9")).toEqual({
+      kind: "room",
+      roomCode: "ABCD2345",
+      startAt: 754,
+    });
+  });
+
+  it("ignores unusable ?t= values", () => {
+    expect(parseDeepLink("seans://room/ABCD2345?t=0")).toEqual({
+      kind: "room",
+      roomCode: "ABCD2345",
+      startAt: null,
+    });
+    expect(parseDeepLink("seans://room/ABCD2345?t=-5")).toEqual({
+      kind: "room",
+      roomCode: "ABCD2345",
+      startAt: null,
+    });
+    expect(parseDeepLink("seans://room/ABCD2345?t=abc")).toEqual({
+      kind: "room",
+      roomCode: "ABCD2345",
+      startAt: null,
+    });
+    expect(parseDeepLink("seans://room/ABCD2345?t=")).toEqual({
+      kind: "room",
+      roomCode: "ABCD2345",
+      startAt: null,
+    });
+  });
+
 });
 
 describe("ROOM_CODE_PATTERN", () => {
