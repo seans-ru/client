@@ -19,6 +19,9 @@ import { pipMiniPlayer } from "../pipMiniPlayer";
 import { pictureQuality } from "../pictureQuality";
 import { hdr } from "../hdr";
 import { debandDenoise } from "../debandDenoise";
+import { roomLobby } from "../roomLobby";
+import { roomSync } from "../roomSync";
+import { roomTracks } from "../roomTracks";
 
 export { ambientLightStub, constantVolumeStub, pipMiniPlayer };
 
@@ -30,4 +33,7 @@ export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
   pictureQuality,
   hdr,
   debandDenoise,
+  roomLobby,
+  roomSync,
+  roomTracks,
 ];
