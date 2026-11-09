@@ -1,0 +1,13 @@
+/**
+ * Seek-rail colors for extension marker kinds (chapters #19, bookmarks #21).
+ * TheIntroDB colors (teal/blue/amber/gray) stay in player.css; these follow
+ * the same `player-seek-marker-<name>` contract.
+ */
+
+.player-seek-marker-violet {
+  background: #8b5cf6;
+}
+
+.player-seek-marker-rose {
+  background: #f43f5e;
+}

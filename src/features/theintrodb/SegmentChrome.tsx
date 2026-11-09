@@ -3,9 +3,10 @@
  * Russian labels; token-only styling via `player.css` classes.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Button } from "../../design/primitives";
 import { formatTime, positionPercent } from "../player/playerHelpers";
+import { markerTrack } from "../player/extensions/markerTrack";
 import type { ActiveSkip, SegmentMarker } from "./types";
 import { SEGMENT_COLOR_CLASS, segmentLabel } from "./types";
 
@@ -17,19 +18,44 @@ export type SeekMarkersProps = {
   duration: number;
 };
 
-/** Thin colored strips on the seek rail at each segment start. */
+/**
+ * Thin colored strips on the seek rail at each segment start. Merges the
+ * TheIntroDB props with the extension marker track (chapters #19, bookmarks
+ * #21); markers with `onSelect` seek on click.
+ */
 export function SeekMarkers({ markers, duration }: SeekMarkersProps) {
-  if (duration <= 0 || markers.length === 0) return null;
+  const extensionMarkers = useSyncExternalStore(
+    markerTrack.subscribe,
+    markerTrack.getMarkers,
+    markerTrack.getMarkers,
+  );
+  const all =
+    extensionMarkers.length === 0
+      ? markers
+      : [...markers, ...extensionMarkers].sort((a, b) => a.startMs - b.startMs);
+  if (duration <= 0 || all.length === 0) return null;
   return (
     <div className="player-seek-markers">
-      {markers.map((marker, index) => {
+      {all.map((marker, index) => {
         const left = positionPercent(marker.startMs / 1000, duration);
         return (
           <span
             key={`${marker.type}-${marker.startMs}-${index}`}
             className={`player-seek-marker player-seek-marker-${SEGMENT_COLOR_CLASS[marker.type]}`}
-            style={{ left: `${left}%` }}
+            style={{
+              left: `${left}%`,
+              cursor: marker.onSelect ? "pointer" : undefined,
+            }}
             title={`${marker.label} · ${formatTime(marker.startMs / 1000)}`}
+            onClick={
+              marker.onSelect
+                ? (event) => {
+                    // Never let the click fall through to the seek rail scrub.
+                    event.stopPropagation();
+                    marker.onSelect?.();
+                  }
+                : undefined
+            }
           />
         );
       })}
