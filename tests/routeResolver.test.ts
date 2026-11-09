@@ -27,7 +27,7 @@ describe("resolveRoute", () => {
   });
 
   it("maps room payload to #/room/:code", () => {
-    expect(resolveRoute({ kind: "room", roomCode: "ABCD2345" })).toBe(
+    expect(resolveRoute({ kind: "room", roomCode: "ABCD2345", startAt: null })).toBe(
       "#/room/ABCD2345",
     );
   });

@@ -18,10 +18,19 @@ export type DeepLinkPayload =
       /** Raw `state` query value; null when absent. */
       state: string | null;
     }
-  | { kind: "room"; roomCode: string };
+  | { kind: "room"; roomCode: string; startAt: number | null };
 
 /** Room code: 8 chars, A–Z and 2–9 (per product contract; 0/1 excluded by range). */
 export const ROOM_CODE_PATTERN = /^[A-Z2-9]{8}$/;
+
+/** `?t=754` moment deep link (issue #29): seconds; null when absent/unusable. */
+export function parseStartAt(raw: string | null | undefined): number | null {
+  if (raw == null) return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  const n = Number(trimmed);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
 
 export function parseDeepLink(raw: string): DeepLinkPayload | null {
   if (typeof raw !== "string" || raw.length === 0) return null;
@@ -66,7 +75,11 @@ export function parseDeepLink(raw: string): DeepLinkPayload | null {
 
   if (host === "room") {
     if (segments.length === 1 && ROOM_CODE_PATTERN.test(segments[0])) {
-      return { kind: "room", roomCode: segments[0] };
+      return {
+        kind: "room",
+        roomCode: segments[0],
+        startAt: parseStartAt(url.searchParams.get("t")),
+      };
     }
     return null;
   }

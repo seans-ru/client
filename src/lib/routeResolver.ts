@@ -84,6 +84,38 @@ export function takePendingRoute(): string | null {
   }
 }
 
+const ROOM_START_AT_PREFIX = "seans.room.startAt.";
+
+/** Remember a `?t=` moment from a room deep link (issue #29). */
+export function stashRoomStartAt(
+  code: string,
+  seconds: number | null | undefined,
+): void {
+  if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) return;
+  try {
+    sessionStorage.setItem(
+      ROOM_START_AT_PREFIX + code,
+      String(Math.floor(seconds)),
+    );
+  } catch {
+    // moment start is best-effort
+  }
+}
+
+/** Consume the stashed room moment for `code` (one-shot, per room entry). */
+export function consumeRoomStartAt(code: string): number | null {
+  try {
+    const key = ROOM_START_AT_PREFIX + code;
+    const raw = sessionStorage.getItem(key);
+    if (raw == null) return null;
+    sessionStorage.removeItem(key);
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Extract the media id from a `#/media/{id}` hash route, if any. */
 export function matchMediaRoute(hash: string): string | null {
   const m = /^#\/media\/([^/]+)$/.exec(hash);

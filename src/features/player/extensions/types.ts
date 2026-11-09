@@ -60,9 +60,51 @@ export type ExtensionTransport = {
   setFullscreen(enabled: boolean): Promise<void>;
 };
 
+/** One live reaction from a room participant (issue #28). */
+export type RoomReactionEvent = {
+  emoji: string;
+  userId: string;
+  name: string | null;
+};
+
+/** One chat message of the room session (issue #29; history is in-memory). */
+export type RoomChatEntry = {
+  id: string;
+  text: string;
+  userId: string;
+  name: string | null;
+  /** Send time (ms epoch). */
+  ts: number;
+};
+
+/**
+ * Room social channel (issues #28/#29). Present only in room mode
+ * (`null` otherwise). Structural twin of `RoomSocialStore` in
+ * `features/rooms/roomSocial.ts`.
+ */
+export type RoomSocialPort = {
+  roomCode(): string;
+  selfUserId(): string | null;
+  selfName(): string | null;
+  isHost(): boolean;
+  /** False when rate-limited (1/s), disabled by the room flag, or no socket. */
+  sendReaction(emoji: string): boolean;
+  /** False when empty / over the length limit / on cooldown / no socket. */
+  sendChat(text: string): boolean;
+  onReaction(cb: (event: RoomReactionEvent) => void): Unsubscribe;
+  getChat(): readonly RoomChatEntry[];
+  /** Chat list + room settings changes (for `useSyncExternalStore`). */
+  subscribe(cb: () => void): Unsubscribe;
+  getReactionsEnabled(): boolean;
+  /** Host-only room-wide broadcast; a no-op for guests. */
+  setReactionsEnabled(enabled: boolean): void;
+};
+
 export type PlayerExtensionContext = {
   readonly id: string;
   readonly transport: ExtensionTransport;
+  /** Room social channel; null outside room mode. */
+  readonly room: RoomSocialPort | null;
   getSnapshot(): PlayerSnapshot;
   onSnapshot(cb: (s: PlayerSnapshot) => void): Unsubscribe;
   onOpen(cb: (info: OpenInfo) => void): Unsubscribe;

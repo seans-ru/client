@@ -32,6 +32,8 @@ export type ExtensionRuntimeDeps = {
   storageFor: (extId: string) => ExtensionStorage;
   /** Chrome visibility actuator (`ctx.ui.setChromeHidden`). */
   setChromeHidden: (hidden: boolean) => void;
+  /** Room social channel (issues #28/#29); null outside room mode. */
+  room?: PlayerExtensionContext["room"];
 };
 
 export type SlotEntry = {
@@ -126,6 +128,7 @@ export function createExtensionRuntime(
     const ctx: PlayerExtensionContext = {
       id: ext.id,
       transport: deps.transport,
+      room: deps.room ?? null,
       getSnapshot: deps.getSnapshot,
       onSnapshot: (cb) => snapshotSignal.add(ext.id, cb),
       onOpen: (cb) => openSignal.add(ext.id, cb),

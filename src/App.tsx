@@ -17,6 +17,7 @@ import {
   resolveRoute,
   ROUTES,
   stashPendingRoute,
+  stashRoomStartAt,
 } from "./lib/routeResolver";
 import { AuthProvider, useAuth } from "./features/auth";
 import type { AuthCallbackDetail } from "./features/auth";
@@ -50,7 +51,27 @@ function handleDeepLinkUrl(raw: string): void {
     });
   }
 
-  navigate(resolveRoute(payload));
+  // Moment link (`seans://room/CODE?t=754`, issue #29) — the room screen
+  // consumes this one-shot and opens the player at that second.
+  if (payload.kind === "room" && payload.startAt != null) {
+    stashRoomStartAt(payload.roomCode, payload.startAt);
+  }
+
+  const target = resolveRoute(payload);
+  // Already on this room route: a same-hash navigate is a no-op and the
+  // moment would never be consumed — re-enter through home so the room
+  // remounts and picks the stashed second up.
+  if (
+    payload.kind === "room" &&
+    payload.startAt != null &&
+    window.location.hash === target
+  ) {
+    navigate(ROUTES.home);
+    window.setTimeout(() => navigate(target), 0);
+    return;
+  }
+
+  navigate(target);
 }
 
 function useHashRoute(): string {

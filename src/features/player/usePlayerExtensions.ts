@@ -18,7 +18,11 @@ import {
   type ExtensionRuntime,
 } from "./extensions/registry";
 import { createExtensionStorage } from "./extensions/storage";
-import type { ExtensionTransport, OpenInfo } from "./extensions/types";
+import type {
+  ExtensionTransport,
+  OpenInfo,
+  RoomSocialPort,
+} from "./extensions/types";
 import { PLAYER_EXTENSIONS } from "./extensions/examples";
 
 export function usePlayerExtensions(args: {
@@ -26,8 +30,10 @@ export function usePlayerExtensions(args: {
   transport: ExtensionTransport;
   /** Latest player snapshot — fanned out to `ctx.onSnapshot`. */
   snapshot: PlayerSnapshot;
+  /** Room social channel (issues #28/#29); null outside room mode. */
+  room?: RoomSocialPort | null;
 }): ExtensionRuntime | null {
-  const { transport, snapshot } = args;
+  const { transport, snapshot, room = null } = args;
 
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
@@ -65,6 +71,7 @@ export function usePlayerExtensions(args: {
       },
       storageFor: createExtensionStorage,
       setChromeHidden: (hidden) => chromeControl.setHidden(hidden),
+      room,
     });
     setRuntime(created);
     return () => {
@@ -74,7 +81,7 @@ export function usePlayerExtensions(args: {
       // Belt and braces: a half-registered extension may leave chrome hidden.
       chromeControl.reset();
     };
-  }, [transportFacade]);
+  }, [transportFacade, room]);
 
   useEffect(() => {
     runtime?.notifySnapshot(snapshot);
