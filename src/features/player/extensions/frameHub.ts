@@ -26,6 +26,12 @@ export type FrameHub = {
     cb: (s: FrameSample) => void,
     opts?: { maxFps?: number },
   ): Unsubscribe;
+  /**
+   * Notified when `reset()` tears the stream down. App-level effects (issue
+   * #7 ambient light) use this to drop back to their default visuals even
+   * though their frame subscription is already gone.
+   */
+  onReset(cb: () => void): Unsubscribe;
   reset(): void;
 };
 
@@ -91,6 +97,7 @@ export function createFrameHub(): FrameHub {
   /** Latest cached sample (computed at most once per published frame). */
   let latest: FrameSample | null = null;
   const subscribers = new Set<Subscriber>();
+  const resetListeners = new Set<() => void>();
 
   /** Close the window with a trailing delivery of the cached latest sample. */
   const armWindowEnd = (sub: Subscriber): void => {
@@ -148,12 +155,26 @@ export function createFrameHub(): FrameHub {
         subscribers.delete(sub);
       };
     },
+    onReset(cb) {
+      resetListeners.add(cb);
+      return () => {
+        resetListeners.delete(cb);
+      };
+    },
     reset() {
       for (const sub of subscribers) {
         if (sub.timer !== null) clearTimeout(sub.timer);
       }
       subscribers.clear();
       latest = null;
+      // Copy: listeners may unregister during notification.
+      for (const cb of [...resetListeners]) {
+        try {
+          cb();
+        } catch (error) {
+          console.warn("[player.ext] frame reset callback", error);
+        }
+      }
     },
   };
 }
