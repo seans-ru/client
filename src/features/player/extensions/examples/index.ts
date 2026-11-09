@@ -11,20 +11,22 @@
 
 import type { PlayerExtension } from "../types";
 import { autoHide } from "../autoHide";
-import { debandDenoise } from "../debandDenoise";
 import { equalizer } from "../eq";
-import { hdr } from "../hdr";
-import { pictureQuality } from "../pictureQuality";
 import { volumeProcessor } from "../volumeProcessor";
 import { ambientLightStub } from "./ambientLightStub";
 import { constantVolumeStub } from "./constantVolumeStub";
+import { pipMiniPlayer } from "../pipMiniPlayer";
+import { pictureQuality } from "../pictureQuality";
+import { hdr } from "../hdr";
+import { debandDenoise } from "../debandDenoise";
 
-export { ambientLightStub, constantVolumeStub };
+export { ambientLightStub, constantVolumeStub, pipMiniPlayer };
 
 export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
   autoHide,
   volumeProcessor,
   equalizer,
+  pipMiniPlayer,
   pictureQuality,
   hdr,
   debandDenoise,
