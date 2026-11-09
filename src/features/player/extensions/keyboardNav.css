@@ -1,0 +1,35 @@
+/**
+ * Keyboard / D-pad / gesture navigation styles (issue #26). The global
+ * `:focus-visible` ring from `design/tokens.css` is the base; this sheet
+ * reinforces it inside the player chrome and wires the gesture touch-action
+ * hook toggled by the `keyboard-nav` extension on `<body>`.
+ */
+
+/* Reinforced focus ring across every interactive player control. */
+.player-surface :focus-visible,
+.palette-modal :focus-visible,
+.stats-panel :focus-visible {
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: var(--focus-offset);
+  border-radius: var(--radius-sm);
+}
+
+/* Keep focused controls above overlapping popups. */
+.player-transport :focus-visible,
+.player-sidecar :focus-visible {
+  position: relative;
+  z-index: 2;
+}
+
+/*
+ * Touch gestures must not scroll/zoom the page while dragging over the
+ * video. Only active while gestures are enabled (`seans-gestures-on`).
+ */
+body.seans-gestures-on .player-video-area {
+  touch-action: none;
+}
+
+/* Keyboard-driven focus should not fight the auto-hidden chrome. */
+.player-chrome-hidden .player-transport :focus-visible {
+  opacity: 1;
+}
