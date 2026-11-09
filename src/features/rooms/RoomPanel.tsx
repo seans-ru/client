@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { Badge, Button } from "../../design/primitives";
 import { isHost, memberLabel, roomShareUrl } from "./roomHelpers";
-import type { RoomMember, RoomState } from "./roomReducer";
+import type { RoomMember, RoomPresence, RoomState } from "./roomReducer";
 
 export type RoomPanelProps = {
   code: string;
@@ -18,12 +18,25 @@ export type RoomPanelProps = {
   embedded?: boolean;
 };
 
+function readinessBadge(presence: RoomPresence | undefined) {
+  if (!presence || presence.ready == null) {
+    return <Badge tone="neutral">Подключается</Badge>;
+  }
+  return presence.ready ? (
+    <Badge tone="accent">Готов</Badge>
+  ) : (
+    <Badge tone="neutral">Не готов</Badge>
+  );
+}
+
 function MemberRow({
   member,
   hostId,
+  presence,
 }: {
   member: RoomMember;
   hostId: string | null;
+  presence: RoomPresence | undefined;
 }) {
   const host = isHost(hostId, member.userId);
   return (
@@ -31,7 +44,10 @@ function MemberRow({
       <span className="room-member-name" title={member.userId}>
         {memberLabel(member)}
       </span>
-      {host ? <Badge tone="accent">Ведущий</Badge> : null}
+      <span className="room-member-flags">
+        {readinessBadge(presence)}
+        {host ? <Badge tone="accent">Ведущий</Badge> : null}
+      </span>
     </li>
   );
 }
@@ -91,6 +107,7 @@ export function RoomPanel({
                 key={member.userId}
                 member={member}
                 hostId={state.hostId}
+                presence={state.presence[member.userId]}
               />
             ))}
           </ul>

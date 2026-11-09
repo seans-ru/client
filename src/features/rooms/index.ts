@@ -6,6 +6,22 @@
 export { RoomPanel } from "./RoomPanel";
 export type { RoomPanelProps } from "./RoomPanel";
 export {
+  createRoomChannel,
+  deriveEffectiveReady,
+  expectedPosition,
+  roomChannel,
+  AUTO_READY_BUFFER_SEC,
+} from "./roomChannel";
+export type {
+  RoomChannel,
+  RoomChannelActions,
+  RoomChannelMember,
+  RoomChannelSenders,
+  RoomChannelState,
+  RoomSessionInfo,
+  RoomToast,
+} from "./roomChannel";
+export {
   buildRoomWsUrl,
   isAbsoluteWsUrl,
   isHost,
@@ -25,9 +41,13 @@ export {
   encodeHeartbeat,
   encodeJoin,
   encodeLeave,
+  encodeReady,
   encodeRoomMessage,
+  encodeSetTracks,
   encodeState,
+  encodeSync,
   encodeSyncRequest,
+  encodeTrackMode,
   parseRoomMessage,
   serverMessageToAction,
 } from "./roomMessages";
@@ -37,14 +57,19 @@ export type {
 } from "./roomMessages";
 export {
   createInitialRoomState,
+  isRoomStarted,
   roomReducer,
 } from "./roomReducer";
 export type {
   RoomAction,
   RoomMember,
   RoomPlaybackAction,
+  RoomPresence,
   RoomState,
   RoomStatus,
+  RoomSyncTarget,
+  RoomTrackMode,
+  RoomTracks,
 } from "./roomReducer";
 export { useRoomDetail } from "./useRoomDetail";
 export type { RoomDetailState, RoomDetailStatus } from "./useRoomDetail";

@@ -121,6 +121,13 @@
   font-size: var(--text-sm);
 }
 
+.room-member-flags {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1, 4px);
+  flex-shrink: 0;
+}
+
 .room-panel-actions {
   display: flex;
   flex-direction: column;

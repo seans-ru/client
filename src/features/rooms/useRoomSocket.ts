@@ -24,8 +24,12 @@ import {
   encodeHeartbeat,
   encodeJoin,
   encodeLeave,
+  encodeReady,
+  encodeSetTracks,
   encodeState,
+  encodeSync,
   encodeSyncRequest,
+  encodeTrackMode,
   parseRoomMessage,
   serverMessageToAction,
 } from "./roomMessages";
@@ -35,6 +39,7 @@ import type {
   RoomAction,
   RoomPlaybackAction,
   RoomState,
+  RoomTrackMode,
 } from "./roomReducer";
 
 export type UseRoomSocketOptions = {
@@ -63,6 +68,11 @@ export type UseRoomSocketOptions = {
   initialHostId?: string | number | null;
   /** Bump to force a reconnect (same code/url). */
   reconnectToken?: number;
+  /**
+   * Readiness + buffer telemetry piggybacked on heartbeats (issue #27).
+   * Optional — old servers ignore the extra fields.
+   */
+  getTelemetry?: () => { ready: boolean; bufferedAhead: number };
 };
 
 export type UseRoomSocketResult = {
@@ -76,6 +86,14 @@ export type UseRoomSocketResult = {
   sendState: (action: RoomPlaybackAction, position: number) => void;
   /** Ask the host/server for a `room_state` snapshot. */
   sendSyncRequest: () => void;
+  /** Readiness report (issue #27/#30) — any member. */
+  sendReady: (ready: boolean, bufferedAhead: number) => void;
+  /** `setTracks` for the whole room (issue #31) — host only. */
+  sendSetTracks: (audioId: number | null, subId: number | null) => void;
+  /** Room track mode (issue #31) — host only. */
+  sendTrackMode: (mode: RoomTrackMode) => void;
+  /** Host drift reference (issue #27) — host only, relay-compatible `state`. */
+  sendSyncRef: (position: number) => void;
   /** Send `leave` (safe to call before unmount). */
   leave: () => void;
 };
@@ -111,6 +129,8 @@ export function useRoomSocket(options: UseRoomSocketOptions): UseRoomSocketResul
   getPositionRef.current = options.getPosition;
   const applyRemoteRef = useRef(options.applyRemote);
   applyRemoteRef.current = options.applyRemote;
+  const getTelemetryRef = useRef(options.getTelemetry);
+  getTelemetryRef.current = options.getTelemetry;
   const selfUserIdRef = useRef(selfUserId);
   selfUserIdRef.current = selfUserId;
 
@@ -142,6 +162,58 @@ export function useRoomSocket(options: UseRoomSocketOptions): UseRoomSocketResul
   const sendSyncRequest = useCallback(() => {
     sendRaw(encodeSyncRequest());
   }, [sendRaw]);
+
+  const sendReady = useCallback(
+    (ready: boolean, bufferedAhead: number) => {
+      sendRaw(encodeReady(ready, bufferedAhead));
+      // No echo for the sender — keep the local presence optimistic.
+      const self = selfUserIdRef.current;
+      if (self != null && String(self) !== "") {
+        dispatch({
+          type: "member_ready",
+          user: { user_id: String(self) },
+          ready: Boolean(ready),
+          bufferedAhead,
+        });
+      }
+    },
+    [sendRaw, dispatch],
+  );
+
+  const sendSetTracks = useCallback(
+    (audioId: number | null, subId: number | null) => {
+      if (!localIsHostRef.current) return;
+      sendRaw(encodeSetTracks(audioId, subId));
+      dispatch({
+        type: "set_tracks",
+        audioId: audioId ?? null,
+        subId: subId ?? null,
+        by: selfUserIdRef.current != null ? String(selfUserIdRef.current) : null,
+      });
+    },
+    [sendRaw, dispatch],
+  );
+
+  const sendTrackMode = useCallback(
+    (mode: RoomTrackMode) => {
+      if (!localIsHostRef.current) return;
+      sendRaw(encodeTrackMode(mode));
+      dispatch({
+        type: "track_mode",
+        mode: mode === "free" ? "free" : "host",
+        by: selfUserIdRef.current != null ? String(selfUserIdRef.current) : null,
+      });
+    },
+    [sendRaw, dispatch],
+  );
+
+  const sendSyncRef = useCallback(
+    (position: number) => {
+      if (!localIsHostRef.current) return;
+      sendRaw(encodeSync(position));
+    },
+    [sendRaw],
+  );
 
   const leave = useCallback(() => {
     sendRaw(encodeLeave());
@@ -208,7 +280,18 @@ export function useRoomSocket(options: UseRoomSocketOptions): UseRoomSocketResul
       clearHeartbeat();
       heartbeatRef.current = setInterval(() => {
         if (ws.readyState !== WebSocket.OPEN) return;
-        ws.send(encodeHeartbeat(getPositionRef.current()));
+        const telemetry = getTelemetryRef.current?.();
+        ws.send(
+          encodeHeartbeat(
+            getPositionRef.current(),
+            telemetry
+              ? {
+                  bufferedAhead: telemetry.bufferedAhead,
+                  ready: telemetry.ready,
+                }
+              : undefined,
+          ),
+        );
       }, ROOM_HEARTBEAT_INTERVAL_MS);
     };
 
@@ -216,7 +299,18 @@ export function useRoomSocket(options: UseRoomSocketOptions): UseRoomSocketResul
       if (cancelled) return;
       const message = parseRoomMessage(String(event.data ?? ""));
       if (!message) return;
-      dispatch(serverMessageToAction(message));
+      // Timestamp position-bearing frames at receipt — drift correction
+      // interpolates the host reference from there (issue #27).
+      const action = serverMessageToAction(message);
+      if (
+        action.type === "state" ||
+        action.type === "room_state" ||
+        action.type === "sync"
+      ) {
+        dispatch({ ...action, receivedAt: Date.now() });
+      } else {
+        dispatch(action);
+      }
       // Host id may have just arrived on this frame — prefer it for the decision.
       const hostId =
         message.type === "room_state" ? message.hostId : stateRef.current.hostId;
@@ -283,6 +377,10 @@ export function useRoomSocket(options: UseRoomSocketOptions): UseRoomSocketResul
     isHost: localIsHost,
     sendState,
     sendSyncRequest,
+    sendReady,
+    sendSetTracks,
+    sendTrackMode,
+    sendSyncRef,
     leave,
   };
 }

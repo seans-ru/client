@@ -6,7 +6,7 @@
  * Create path is unchanged (Library «Создать комнату» lands on this route).
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ROOM_CODE_PATTERN } from "../lib/deepLink";
 import { ROUTES } from "../lib/routeResolver";
 import { ErrorSlot, LoadingSlot } from "../design/slots";
@@ -14,7 +14,13 @@ import { Button } from "../design/primitives";
 import { useAuth } from "../features/auth";
 import { PlayerScreen } from "./PlayerScreen";
 import type { RoomTransport, RoomTransportAction } from "./PlayerScreen";
-import { RoomPanel, roomCloseMessage, useRoomDetail, useRoomSocket } from "../features/rooms";
+import {
+  RoomPanel,
+  roomChannel,
+  roomCloseMessage,
+  useRoomDetail,
+  useRoomSocket,
+} from "../features/rooms";
 import "../features/rooms/room.css";
 
 function navigate(hash: string): void {
@@ -82,7 +88,15 @@ export function RoomScreen({ code }: { code: string }) {
     initialMembers,
     initialHostId,
     reconnectToken,
+    getTelemetry: () => {
+      const channel = roomChannel.get();
+      return { ready: channel.ready, bufferedAhead: channel.bufferedAhead };
+    },
   });
+
+  // Keep the latest room handle available to stable callbacks (senders below).
+  const roomRef = useRef(room);
+  roomRef.current = room;
 
   // `sendState` is stable; keep a ref so `onTransport` identity stays constant.
   const sendStateRef = useRef(room.sendState);
@@ -125,6 +139,48 @@ export function RoomScreen({ code }: { code: string }) {
     }
     return null;
   }, [detail, code]);
+
+  // Room session for the player extensions (lobby / smart sync / tracks).
+  const sessionFileId = fileId ?? "";
+  const sessionUserId = selfUserId != null ? String(selfUserId) : "";
+  useEffect(() => {
+    if (!sessionFileId || !sessionUserId) return;
+    roomChannel.beginSession({
+      code,
+      selfUserId: sessionUserId,
+      taskFileId: sessionFileId,
+    });
+    return () => {
+      roomChannel.endSession();
+    };
+  }, [code, sessionFileId, sessionUserId]);
+
+  // Mirror the pure room state into the channel on every reducer dispatch.
+  const roomState = room.state;
+  useEffect(() => {
+    roomChannel.syncRoom(roomState);
+  }, [roomState]);
+
+  // Outbound senders for extension actions (bound once, routed via refs).
+  useEffect(() => {
+    roomChannel.bindSenders({
+      setReady: (ready, bufferedAhead) => {
+        roomRef.current.sendReady(ready, bufferedAhead);
+      },
+      setTracks: (tracks) => {
+        roomRef.current.sendSetTracks(tracks.audioId, tracks.subId);
+      },
+      setTrackMode: (mode) => {
+        roomRef.current.sendTrackMode(mode);
+      },
+      syncRef: (position) => {
+        roomRef.current.sendSyncRef(position);
+      },
+      seekToGroup: (position) => {
+        void transportRef.current?.apply("seek", position);
+      },
+    });
+  }, []);
 
   if (!valid) {
     return (
