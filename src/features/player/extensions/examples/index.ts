@@ -19,6 +19,9 @@ import { pipMiniPlayer } from "../pipMiniPlayer";
 import { pictureQuality } from "../pictureQuality";
 import { hdr } from "../hdr";
 import { debandDenoise } from "../debandDenoise";
+import { avSync } from "../avSync";
+import { scaleTempo } from "../scaleTempo";
+import { hrtf } from "../hrtf";
 
 export { ambientLightStub, constantVolumeStub, pipMiniPlayer };
 
@@ -30,4 +33,7 @@ export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
   pictureQuality,
   hdr,
   debandDenoise,
+  avSync,
+  scaleTempo,
+  hrtf,
 ];
