@@ -306,8 +306,9 @@ export function createGeometrySettings(
 ): GeometrySettings {
   let state = loadGeometryState(storage, null);
   let mediaKey: string | null = null;
-  let videoW = 0;
-  let videoH = 0;
+  // Cached identity for useSyncExternalStore: a fresh object per call would
+  // re-render forever (React compares snapshots by reference).
+  let videoSize: { w: number; h: number } = { w: 0, h: 0 };
   const listeners = new Set<() => void>();
   const notify = () => {
     for (const listener of [...listeners]) listener();
@@ -329,7 +330,7 @@ export function createGeometrySettings(
       };
     },
     getState: () => state,
-    getVideoSize: () => ({ w: videoW, h: videoH }),
+    getVideoSize: () => videoSize,
     loadForFile(key) {
       mediaKey = key;
       const next = loadGeometryState(storage, key);
@@ -362,9 +363,8 @@ export function createGeometrySettings(
     refreshVideoSize(snapshot) {
       const w = Math.trunc(snapshot.video_w ?? 0);
       const h = Math.trunc(snapshot.video_h ?? 0);
-      if (w === videoW && h === videoH) return;
-      videoW = w;
-      videoH = h;
+      if (w === videoSize.w && h === videoSize.h) return;
+      videoSize = { w, h };
       notify();
     },
   };

@@ -288,6 +288,19 @@ describe("per-file + global memory (issue #15)", () => {
 });
 
 describe("createGeometrySettings / controller", () => {
+  it("getVideoSize keeps snapshot identity between changes", () => {
+    const settings = createGeometrySettings(makeStorage());
+    expect(settings.getVideoSize()).toBe(settings.getVideoSize());
+    const before = settings.getVideoSize();
+    settings.refreshVideoSize({ ...DEFAULT_SNAPSHOT, video_w: 1920, video_h: 1080 });
+    const after = settings.getVideoSize();
+    expect(after).not.toBe(before);
+    expect(after).toEqual({ w: 1920, h: 1080 });
+    expect(settings.getVideoSize()).toBe(after);
+    settings.refreshVideoSize({ ...DEFAULT_SNAPSHOT, video_w: 1920, video_h: 1080 });
+    expect(settings.getVideoSize()).toBe(after);
+  });
+
   it("steps zoom by ±10 percent and rotates in 90° increments", () => {
     const settings = createGeometrySettings(makeStorage());
     settings.zoomBy(10);
