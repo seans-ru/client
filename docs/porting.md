@@ -20,7 +20,7 @@ Android TV. Документ собирает размазанное по issues
 |---|---|---|---|---|
 | **Windows** | ✅ база: кадр-стрим работает | — | — | shipped (M7) |
 | **macOS** | не начат | M: 5 задач, ~2–3 нед | сначала #32 (трейт); нотаризация и hwdec-videotoolbox в CI | #32–#36 |
-| **Linux** | не начат (ждёт #32) | M: 5 задач, ~2–3 нед | выбор дистрибутива libmpv (#38); матрица DE/Wayland и перф readback (#41) | #37–#41 |
+| **Linux** | частично: EGL RenderSurface и системный libmpv реализованы (#37–#38) | M: 5 задач, ~2–3 нед | hardware decode на целевых GPU, desktop-интеграции, AppImage/updater, DE/Wayland и readback perf QA | #39–#41 |
 | **Android** | spike не начат | L: 5 задач, ~3–4 нед | **решение #42 (libmpv NDK vs ExoPlayer)** — от него зависит весь пайплайн; updater на Android не работает (#45) | #42–#46 |
 | **Android TV** | не начат (ждёт Android) | M: 6 задач, ~2–3 нед поверх Android | TV-вход требует API бэкенда (#50 / #53); слабые SoC и кодеки (#49, #51) | #47–#51, #53 |
 
@@ -96,7 +96,7 @@ Windows остаётся HWND скрытого окна `SeansMpvHost`, либо
 | Якорь окна | скрытое Win32-окно `SeansMpvHost` (`host.rs`, `CS_OWNDC`, never `WS_VISIBLE`) | **не нужен** — контекст без host-окна | **не нужен** | **не нужен** |
 | Render target | texture FBO (RGBA8) | texture FBO (RGBA8) | texture FBO (RGBA8) | texture FBO (RGBA8) |
 | Readback | `glReadPixels` (PACK_ALIGNMENT=1) | `glReadPixels` | `glReadPixels` | `glReadPixels` |
-| Загрузка GL | `libloading` из `opengl32/gdi32/user32/kernel32`, FBO-точки через `wglGetProcAddress` | системный OpenGL framework / ANGLE | системный libEGL/libGLESv2 | NDK GLES |
+| Загрузка GL | `libloading` из `opengl32/gdi32/user32/kernel32`, FBO-точки через `wglGetProcAddress` | системный OpenGL framework / ANGLE | системные `libEGL.so.1` + `libGL.so.1`, GL-точки через EGL proc resolver | NDK GLES |
 | hwdec | `hwdec=auto-safe` (d3d11va/dxva2/nvdec) | `auto-safe` → **videotoolbox** | `auto-safe` → **vaapi/nvdec** (#38) | mpv NDK: `mediacodec`; либо ExoPlayer без RenderSurface |
 
 Ключевое следствие кадр-стрим-архитектуры: **за пределами Windows трейту не
@@ -249,6 +249,20 @@ Loopback-сокет без сериализации — минимальный �
 
 ---
 
+### 4.3 Linux libmpv: системная библиотека — #38
+
+Для Linux выбран системный `libmpv.so.2`, загружаемый через динамический
+загрузчик. Linux-пакет приложения не встраивает вторую копию libmpv и её FFmpeg
+зависимости: пакет дистрибутива отвечает за совместимость кодеков и системных
+GPU-драйверов. При отсутствии библиотеки приложение показывает инструкцию по
+установке пакета. На старте mpv выставляется `hwdec=auto-safe`; недоступный
+VA-API/NVDEC должен деградировать к software decode. Этот выбор требует
+проверки на железе с Intel/AMD и NVIDIA в #41.
+
+Сам по себе успешный EGL startup не доказывает, что драйвер включил аппаратное
+декодирование. Фактический backend нужно читать из `hwdec-current` и проверять
+на целевых системах.
+
 ## 5. Порядок работ
 
 Зависимости (детали задач — в их issues):
@@ -270,10 +284,13 @@ flowchart TD
 
 ### Шаги
 
-1. **#32 — трейт `RenderSurface`** (фундамент, macOS). Вынести трейт, WGL за
-   `#[cfg(windows)]`, поведение Windows идентично. Без этого не начинаются
-   #33 и #37. *Можно параллельно:* #42 spike — он от трейта не зависит.
-2. **#33 (macOS) и #37 (Linux) — имплементации** трейта, фактически параллельно.
+1. **#32 — общий трейт `RenderSurface`**: формализует совпадающий lifecycle
+   surface'ов и оставляет WGL под `#[cfg(windows)]`. Это фундамент для #33;
+   Linux #37 уже использует platform-selected EGL surface с тем же контрактом
+   методов и не блокирует разработку на выделении общего трейта. *Можно
+   параллельно:* #42 spike — он от RenderSurface не зависит.
+2. **#33 (macOS)** — имплементация после #32; **#37 (Linux)** — EGL surface
+   без host-окна, surfaceless с pbuffer fallback.
 3. **Платформенные стеки** (внутри платформы — по порядку):
    - macOS: #34 (бандл dylib) → #35 (шиммы) → #36 (поставка/CI).
    - Linux: #38 (дистрибуция libmpv) → #39 (шиммы) → #40 (поставка/CI) →

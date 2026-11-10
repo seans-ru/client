@@ -1,29 +1,26 @@
-# Player / libmpv (M7)
+# Player / libmpv
 
-In-process playback notes for the Seans Windows client. Product constraints:
-no packers, **no runtime DLL download**, bundled `libmpv-2.dll` only.
+In-process playback notes for the Seans desktop client. Rendering uses
+`mpv_render_context` and the offscreen frame stream on Windows and Linux.
+Windows bundles its DLLs at build time; Linux uses the distribution's libmpv
+package so codec, FFmpeg and GPU-driver dependencies stay consistent with the
+host system.
 
-## Rendering strategy: `wid` (chosen) vs `mpv_render_context`
+## Rendering strategy: offscreen `mpv_render_context`
 
-v1 uses the **`wid`** option: libmpv creates/owns rendering inside a Win32
-child window (`STATIC` class) whose HWND is passed to `mpv_set_option("wid")`
-**before** `mpv_initialize`.
+libmpv renders into an offscreen texture-backed OpenGL FBO, and Rust streams
+RGBA frames to the frontend canvas. This keeps the player chrome in normal DOM
+z-order and avoids depending on foreign-window embedding in Wayland.
 
-| | `wid` child HWND | `mpv_render_context` + D3D11 |
-|---|---|---|
-| Complexity | low (CreateWindowEx + MoveWindow) | high (swapchain, format, resize) |
-| Overlay UI | HTML on top of the child (webview sibling Z-order) | must composite / separate view |
-| Resize | `MoveWindow` on parent resize | re-create / resize swapchain |
-| Fallback needed | no | not for v1 |
+Windows keeps a hidden WGL window as an OpenGL context anchor. Linux uses EGL
+with `EGL_KHR_surfaceless_context`; when that extension is unavailable it uses
+a 2×2 pbuffer as the context anchor. Both paths render to the same RGBA8 FBO
+and preserve the bottom-up frame-stream format.
 
-If `wid` proves fragile on a target GPU/driver, the documented fallback is
-`mpv_render_context` + D3D11 into a shared texture — out of scope for M7.
+The legacy `wid` render path is not used; Linux never creates an X11 or Wayland
+child video window.
 
-Z-order: the host child is placed at `HWND_BOTTOM` among the main window's
-children so WebView2 (transparent on the player route) draws overlay controls
-above the video. `app-fullbleed.player-surface` keeps a transparent background.
-
-## DLL layout and loading
+## Windows DLL layout and loading
 
 ```
 seans.exe
@@ -44,11 +41,28 @@ Runtime load (`src-tauri/src/player/ffi.rs`):
    never `%TEMP%`.
 3. Missing file → «Не найден libmpv-2.dll — пересоберите приложение с scripts/fetch-mpv.ps1».
 
+## Linux libmpv dependency
+
+Linux resolves `libmpv.so.2` through the system dynamic loader. Install the
+runtime package before launching the app (`libmpv2` on Ubuntu/Debian, `mpv-libs`
+on Fedora, or `mpv` on Arch). The distro package supplies FFmpeg and codec
+dependencies and can match its VA-API/NVIDIA integration to the installed GPU
+stack. The application does not download libraries at launch.
+
+`hwdec=auto-safe` asks libmpv to select a safe hardware decoder, including
+VA-API on supported Intel/AMD systems and NVDEC when the installed NVIDIA
+driver and libmpv build expose it. If a hardware decoder cannot be initialized,
+libmpv falls back to software decoding. Confirm the actual `hwdec-current`
+value and playback on target hardware; that cannot be inferred from a successful
+build or an EGL context alone.
+
 ## HW decode
 
-`hwdec=auto-safe` (d3d11va / dxva2 / nvdec order, automatic software fallback).
-The active decoder is read from `hwdec-current` and exposed read-only on the
-player overlay (`formatHwdec`) for the future Settings screen.
+`hwdec=auto-safe` asks libmpv to select a safe hardware decoder and fall back
+to software when unavailable. On Windows this may use D3D11VA/DXVA2; on Linux
+it may use VA-API or NVDEC depending on the system libmpv build and installed
+drivers. The active decoder is read from `hwdec-current` and exposed read-only
+on the player overlay (`formatHwdec`).
 
 ## Events
 

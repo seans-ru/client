@@ -10,8 +10,14 @@ use std::ptr;
 use std::sync::Arc;
 
 /// Shown when `libmpv-2.dll` cannot be found next to the app.
+#[cfg(windows)]
 pub const MISSING_DLL_ERROR: &str =
     "Не найден libmpv-2.dll — пересоберите приложение с scripts/fetch-mpv.ps1";
+#[cfg(target_os = "linux")]
+pub const MISSING_DLL_ERROR: &str =
+    "Не найдена libmpv.so.2 — установите пакет libmpv2 (Ubuntu/Debian) или mpv (Arch)";
+#[cfg(not(any(windows, target_os = "linux")))]
+pub const MISSING_DLL_ERROR: &str = "Не найдена библиотека libmpv — установите libmpv для вашей платформы";
 
 /// Shown when libmpv cannot open/play the requested URL.
 pub const OPEN_FAILED_ERROR: &str = "Не удалось открыть файл";
@@ -216,7 +222,7 @@ fn resolve<T: Copy>(lib: &libloading::Library, name: &[u8]) -> Result<T, String>
     unsafe {
         let sym: libloading::Symbol<T> = lib.get(name).map_err(|_| {
             format!(
-                "libmpv-2.dll: missing symbol {}",
+                "libmpv: missing symbol {}",
                 String::from_utf8_lossy(name)
             )
         })?;
@@ -239,6 +245,20 @@ impl MpvApi {
         let lib = unsafe { libloading::Library::new(dll) }.map_err(|e| {
             format!("{MISSING_DLL_ERROR} ({e})")
         })?;
+
+        Self::load_from_library(lib)
+    }
+
+    /// Load the system `libmpv.so.2` through the normal dynamic-loader search
+    /// path. Linux package managers own updates and FFmpeg/driver dependencies.
+    #[cfg(target_os = "linux")]
+    pub fn load_from_system() -> Result<Arc<MpvApi>, String> {
+        let lib = unsafe { libloading::Library::new("libmpv.so.2") }
+            .map_err(|e| format!("{MISSING_DLL_ERROR} ({e})"))?;
+        Self::load_from_library(lib)
+    }
+
+    fn load_from_library(lib: libloading::Library) -> Result<Arc<MpvApi>, String> {
 
         let api = MpvApi {
             create: resolve(&lib, b"mpv_create\0")?,

@@ -2,9 +2,9 @@
  * JWT session storage.
  *
  * The token lives in memory for the request layer and is persisted ONLY via the
- * Windows Credential Manager (Rust `keyring` crate: service `seans`, account
- * `session`). It is never written to localStorage or any other JS-visible disk
- * store.
+ * OS credential store (Rust `keyring` crate: service `seans`, account `session`).
+ * Windows uses Credential Manager; Linux uses Secret Service. It is never
+ * written to localStorage or any other JS-visible disk store.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -25,13 +25,13 @@ export function setSessionToken(token: string | null): void {
   memoryToken = token && token.length > 0 ? token : null;
 }
 
-/** Persist the token to the Credential Manager and keep it in memory. */
+/** Persist the token to the OS credential store and keep it in memory. */
 export async function saveSessionToken(token: string): Promise<void> {
   setSessionToken(token);
   await invoke("save_token", { token });
 }
 
-/** Load the token from the Credential Manager into memory. Null when absent. */
+/** Load the token from the OS credential store into memory. Null when absent. */
 export async function loadSessionToken(): Promise<string | null> {
   const token = await invoke<string | null>("load_token");
   setSessionToken(token ?? null);

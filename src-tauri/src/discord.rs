@@ -8,7 +8,8 @@
 //! Join flow (friend clicks «Присоединиться» on the activity):
 //!   * warm — Discord dispatches `ACTIVITY_JOIN` with the join secret over IPC;
 //!   * cold — Discord launches the registered `discord-{APP_ID}://…` protocol
-//!     (see `register_discord_launcher`), the secret arrives in argv.
+//!     (see `register_discord_launcher`), the secret arrives in argv. Windows
+//!     uses a per-user protocol registration; Linux uses an XDG desktop entry.
 //! Both paths stash the payload in `PENDING_JOIN` (the frontend may not be
 //! mounted yet) and emit `DISCORD_JOIN_EVENT`.
 
@@ -258,6 +259,7 @@ fn run_client(app: AppHandle, rx: Receiver<DiscordCmd>) {
 /// Same mechanism as `Discord_Register` in discord-rpc: an HKCU URL protocol
 /// whose command is the current exe. Idempotent — also refreshes the path
 /// after an update/install move.
+#[cfg(windows)]
 fn register_discord_launcher() {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::System::Registry::{
@@ -326,13 +328,83 @@ fn register_discord_launcher() {
     }
 }
 
+/// Register the URI handlers in the user's XDG applications directory.
+///
+/// Tauri's bundler also writes these schemes into the packaged desktop entry;
+/// this runtime entry covers `tauri dev` and refreshes the launcher after an
+/// AppImage is moved. Prefer the AppImage path over `/tmp/.mount_*/...`, which
+/// is only valid while the current AppImage process is mounted.
+#[cfg(target_os = "linux")]
+fn register_discord_launcher() {
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    fn quote_exec_arg(value: &str) -> String {
+        let escaped = value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('`', "\\`")
+            .replace('$', "\\$")
+            .replace('%', "%%");
+        format!("\"{escaped}\"")
+    }
+
+    let data_home = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
+    let Some(applications_dir) = data_home.map(|dir| dir.join("applications")) else {
+        eprintln!("[discord] cannot find XDG data directory; URI handlers were not registered");
+        return;
+    };
+
+    let launcher = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok());
+    let Some(launcher) = launcher else {
+        eprintln!("[discord] cannot locate executable; URI handlers were not registered");
+        return;
+    };
+
+    let desktop_id = "ru.tedeshi.seans.desktop";
+    let desktop_file = applications_dir.join(desktop_id);
+    let mime_types = format!(
+        "x-scheme-handler/seans;x-scheme-handler/discord-{DISCORD_APP_ID};"
+    );
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName=Seans\nComment=Seans media client\nExec={} %u\nTerminal=false\nStartupNotify=false\nCategories=AudioVideo;Player;\nMimeType={}\n",
+        quote_exec_arg(&launcher.to_string_lossy()),
+        mime_types,
+    );
+
+    if let Err(error) = std::fs::create_dir_all(&applications_dir)
+        .and_then(|()| std::fs::write(&desktop_file, entry))
+    {
+        eprintln!("[discord] write {}: {error}", desktop_file.display());
+        return;
+    }
+
+    let schemes = ["seans".to_string(), format!("discord-{DISCORD_APP_ID}")];
+    for scheme in &schemes {
+        let handler = format!("x-scheme-handler/{scheme}");
+        match Command::new("xdg-mime")
+            .args(["default", desktop_id, handler.as_str()])
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            Ok(status) => eprintln!("[discord] xdg-mime {handler}: exited with {status}"),
+            Err(error) => eprintln!("[discord] xdg-mime {handler}: {error}"),
+        }
+    }
+}
+
 /// Boot the Discord worker thread, register the launch protocol, and consume
 /// any join payload Discord passed at process start.
 pub fn init(app: &AppHandle) {
     register_discord_launcher();
 
-    // Cold-start join: Windows runs the registered command with the protocol
-    // URL in argv. Forward it through the same pipeline as the IPC event.
+    // Cold-start join: the desktop protocol handler starts Seans with the URL
+    // in argv. Forward it through the same pipeline as the IPC event.
     for arg in std::env::args().skip(1) {
         if let Some(secret) = join_secret_candidate(&arg) {
             dispatch_join(app, secret);

@@ -185,8 +185,9 @@ unsafe extern "C" fn on_render_update(user: *mut c_void) {
 }
 
 /// Owns the GL surface + mpv render context on its thread. Draws each new
-/// video frame into the hidden host window's default framebuffer, reads the
-/// pixels back and publishes them to the frame stream hub.
+/// video frame into a texture-backed FBO, reads pixels back and publishes
+/// them to the frame-stream hub. Windows uses a hidden WGL anchor window;
+/// Linux creates an EGL surfaceless context with a pbuffer fallback.
 fn render_loop(
     api: Arc<MpvApi>,
     handle: SendHandle,
@@ -555,7 +556,7 @@ pub fn open(
     let handle = unsafe { api.create()? };
 
     // Options must be set before initialize.
-    // vo=libmpv: render API into an offscreen GL target (see `gl.rs` +
+    // vo=libmpv: render API into an offscreen GL target (see platform `gl` +
     // `frames.rs`) — the page canvas receives the pixels, so HTML chrome can
     // freely overlay the video (no HWND z-order fights with WebView2).
     if let Err(e) = unsafe { api.set_option_string(handle, "vo", "libmpv") } {
@@ -605,8 +606,8 @@ pub fn open(
         return Err(e);
     }
 
-    // Size the hidden GL anchor window to the default render target; the
-    // frontend overrides this via `player_sync_size` with the canvas size.
+    // Keep the Windows GL anchor aligned to the render target; Linux has no
+    // host window. The frontend overrides this through `player_sync_size`.
     host.fit_parent();
     unsafe { observe_core(&api, handle) };
 
@@ -999,8 +1000,8 @@ pub fn toggle_fullscreen(app: &AppHandle) -> Result<(), String> {
     set_fullscreen(app, !current)
 }
 
-/// Keep the mpv child window on the last known video rect (legacy fit when the
-/// DOM has not supplied one yet). Called after window resize / fullscreen.
+/// Keep the Windows mpv child window on the last known video rect. Linux has
+/// no native video window. Called after window resize / fullscreen.
 pub fn sync_host_size() {
     if let Ok(mut guard) = session().inner.lock() {
         if let Some(inner) = guard.as_mut() {
