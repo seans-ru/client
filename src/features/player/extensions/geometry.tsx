@@ -233,7 +233,9 @@ export function geometryCommands(state: GeometryState): GeometryCommand[] {
     },
     { op: "set", name: "panscan", value: state.aspect === "fill" ? 1 : 0 },
     { op: "set", name: "video-zoom", value: zoomPercentToVideoZoom(state.zoomPercent) },
-    { op: "set", name: "video-rotate", value: state.rotate },
+    // `video-rotate` is an integer property: mpv rejects a double write
+    // (MPV_ERROR_PROPERTY_FORMAT), so it goes out as a string.
+    { op: "set", name: "video-rotate", value: String(state.rotate) },
     { op: "set", name: "video-pan-x", value: state.panX },
     { op: "set", name: "video-pan-y", value: state.panY },
   ];

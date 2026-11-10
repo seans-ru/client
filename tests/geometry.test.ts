@@ -210,7 +210,7 @@ describe("geometryCommands (issue #15 mpv mapping)", () => {
       }),
     );
     expect(sets.get("video-zoom")).toBeCloseTo(Math.log2(1.1), 10);
-    expect(sets.get("video-rotate")).toBe(90);
+    expect(sets.get("video-rotate")).toBe("90");
     expect(sets.get("video-pan-x")).toBe(0.1);
     expect(sets.get("video-pan-y")).toBe(-0.05);
   });
@@ -244,7 +244,7 @@ describe("geometryCommands (issue #15 mpv mapping)", () => {
     expect(sets.get("keepaspect")).toBe(true);
     expect(sets.get("panscan")).toBe(0);
     expect(sets.get("video-zoom")).toBe(0);
-    expect(sets.get("video-rotate")).toBe(0);
+    expect(sets.get("video-rotate")).toBe("0");
     expect(sets.get("video-pan-x")).toBe(0);
     expect(sets.get("video-pan-y")).toBe(0);
     expect(
@@ -450,7 +450,7 @@ describe("geometry extension (registry scenarios)", () => {
         .map((c) => c.args),
     );
     expect(sets.get("video-aspect-override")).toBe("4:3");
-    expect(sets.get("video-rotate")).toBe(90);
+    expect(sets.get("video-rotate")).toBe("90");
     expect(
       mpv.calls.some(
         (c) =>
@@ -478,7 +478,7 @@ describe("geometry extension (registry scenarios)", () => {
         .filter((c): c is Extract<MpvCall, { kind: "set" }> => c.kind === "set")
         .map((c) => c.args),
     );
-    expect(closeSets.get("video-rotate")).toBe(0);
+    expect(closeSets.get("video-rotate")).toBe("0");
     expect(closeSets.get("video-aspect-override")).toBe("no");
 
     mpv.calls.length = 0;
