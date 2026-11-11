@@ -10,8 +10,11 @@
  */
 
 import type { PlayerExtension } from "../types";
+import { audioRules } from "../audioRules";
 import { autoHide } from "../autoHide";
+import { dualSubs } from "../dualSubs";
 import { equalizer } from "../eq";
+import { geometry } from "../geometry";
 import { volumeProcessor } from "../volumeProcessor";
 import { ambientLightStub } from "./ambientLightStub";
 import { constantVolumeStub } from "./constantVolumeStub";
@@ -23,6 +26,9 @@ import { chapters } from "../chapters";
 import { bookmarks } from "../bookmarks";
 import { scrubPreview } from "../scrubPreview";
 import { autoNext } from "../autoNext";
+import { avSync } from "../avSync";
+import { scaleTempo } from "../scaleTempo";
+import { hrtf } from "../hrtf";
 
 export { ambientLightStub, constantVolumeStub, pipMiniPlayer };
 
@@ -30,6 +36,9 @@ export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
   autoHide,
   volumeProcessor,
   equalizer,
+  audioRules,
+  dualSubs,
+  geometry,
   pipMiniPlayer,
   pictureQuality,
   hdr,
@@ -41,4 +50,7 @@ export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
   bookmarks,
   scrubPreview,
   autoNext,
+  avSync,
+  scaleTempo,
+  hrtf,
 ];
