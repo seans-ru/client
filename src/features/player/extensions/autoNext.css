@@ -1,0 +1,89 @@
+/**
+ * Auto-next card (issue #20): bottom-right of the `overlay` slot, floating
+ * just above the transport strip (the layer's flex-end corner).
+ */
+
+.player-autonext-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+  max-width: 300px;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg, 12px);
+  background: rgba(15, 18, 24, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  color: #fafafa;
+  z-index: 6;
+}
+
+.player-autonext-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.player-autonext-kicker {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #a1a1aa;
+}
+
+.player-autonext-count {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #f4f4f5;
+}
+
+.player-autonext-title {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #e4e4e7;
+}
+
+.player-autonext-watched {
+  margin: 0;
+  font-size: 11px;
+  color: #fbbf24;
+}
+
+.player-autonext-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.player-autonext-primary {
+  flex: 1 1 auto;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent, #8b5cf6);
+  color: var(--accent-ink, #fff);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.player-autonext-primary:hover {
+  filter: brightness(1.08);
+}
+
+.player-autonext-secondary {
+  padding: 7px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: transparent;
+  color: #d4d4d8;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.player-autonext-secondary:hover {
+  background: rgba(255, 255, 255, 0.08);
+}

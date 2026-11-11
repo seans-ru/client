@@ -22,6 +22,10 @@ import { pipMiniPlayer } from "../pipMiniPlayer";
 import { pictureQuality } from "../pictureQuality";
 import { hdr } from "../hdr";
 import { debandDenoise } from "../debandDenoise";
+import { chapters } from "../chapters";
+import { bookmarks } from "../bookmarks";
+import { scrubPreview } from "../scrubPreview";
+import { autoNext } from "../autoNext";
 import { avSync } from "../avSync";
 import { scaleTempo } from "../scaleTempo";
 import { hrtf } from "../hrtf";
@@ -39,6 +43,13 @@ export const PLAYER_EXTENSIONS: readonly PlayerExtension[] = [
   pictureQuality,
   hdr,
   debandDenoise,
+  // Timeline features (milestone 0.2.0): #19 chapters, #21 bookmarks,
+  // #17 scrub preview, #20 auto-next. Order = slot order in the settings
+  // menu and on the seek rail.
+  chapters,
+  bookmarks,
+  scrubPreview,
+  autoNext,
   avSync,
   scaleTempo,
   hrtf,

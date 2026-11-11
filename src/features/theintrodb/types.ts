@@ -22,12 +22,23 @@ export type TheIntroDbBundle = {
   preview: TheIntroDbSegment[];
 };
 
+/**
+ * Marker kinds on the seek rail (shared format, extended for #17/#19/#21):
+ * TheIntroDB segments plus mpv chapters and user bookmarks.
+ */
+export type SegmentMarkerType =
+  | TheIntroDbSegmentType
+  | "chapter"
+  | "bookmark";
+
 /** Flat seek-bar / chapter row. `startMs` is resolved (null → 0). */
 export type SegmentMarker = {
-  type: TheIntroDbSegmentType;
+  type: SegmentMarkerType;
   startMs: number;
   endMs: number | null;
   label: string;
+  /** Click-to-seek hook for extension markers (absent on TheIntroDB rows). */
+  onSelect?: () => void;
 };
 
 /** A skip-button offer for intro/recap (personal, not broadcast). */
@@ -44,11 +55,13 @@ export const SEGMENT_TYPES: readonly TheIntroDbSegmentType[] = [
 ];
 
 /** Seek bar strip colors (CSS class suffixes). */
-export const SEGMENT_COLOR_CLASS: Record<TheIntroDbSegmentType, string> = {
+export const SEGMENT_COLOR_CLASS: Record<SegmentMarkerType, string> = {
   intro: "teal",
   recap: "blue",
   credits: "amber",
   preview: "gray",
+  chapter: "violet",
+  bookmark: "rose",
 };
 
 export function emptyBundle(): TheIntroDbBundle {
@@ -59,7 +72,7 @@ export function emptyBundle(): TheIntroDbBundle {
 export const EMPTY_BUNDLE: TheIntroDbBundle = emptyBundle();
 
 /** Russian label for a segment type (chapters menu, marker tooltip). */
-export function segmentLabel(type: TheIntroDbSegmentType): string {
+export function segmentLabel(type: SegmentMarkerType): string {
   switch (type) {
     case "intro":
       return "Интро";
@@ -69,5 +82,9 @@ export function segmentLabel(type: TheIntroDbSegmentType): string {
       return "Титры";
     case "preview":
       return "Превью";
+    case "chapter":
+      return "Глава";
+    case "bookmark":
+      return "Закладка";
   }
 }
