@@ -1,5 +1,5 @@
-# Autobuild the Windows client on every push to main and publish the signed
-# installers + updater manifest to S3 so installed clients can self-update.
+# Autobuild signed Windows installers and a Linux AppImage on every push to
+# main, then publish both platform entries and their signed payloads to S3.
 #
 # Version: 0.1.<github.run_number> — strictly increasing per workflow run, no
 # version-bump commits. The committed version in tauri.conf.json is the 0.1.x
@@ -38,6 +38,8 @@ env:
 jobs:
   windows:
     runs-on: windows-latest
+    outputs:
+      version: ${{ format('0.1.{0}', github.run_number) }}
     permissions:
       contents: read
     steps:
@@ -74,49 +76,142 @@ jobs:
           set -euo pipefail
           VERSION="0.1.${{ github.run_number }}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          npx tauri build --config "{\"version\":\"$VERSION\"}"
+          npx tauri build --bundles nsis,msi --config "{\"version\":\"$VERSION\"}"
 
-      - name: Make update manifest
+      - name: Stage Windows release artifacts
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/make-update-manifest.mjs \
-            --version "$VERSION" \
-            --bundle-dir src-tauri/target/release/bundle \
-            --base-url "$UPDATE_BASE_URL" \
-            --out latest.json \
-            --notes "Build ${{ github.run_number }} (${{ github.sha }})"
-
-      - name: Upload to S3
-        shell: bash
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ env.S3_REGION }}
-          # s3.buckets.ru rejects aws-chunked CRC32 trailers (SignatureDoesNotMatch).
-          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-        run: |
-          set -euo pipefail
-          # s3.buckets.ru is path-style only (same as the backend's boto3 config).
-          aws configure set default.s3.addressing_style path
-          aws configure set default.request_checksum_calculation when_required
-          aws configure set default.response_checksum_validation when_required
-
-          STAGING="publish/updates/$VERSION"
+          STAGING="publish/updates/$VERSION/windows"
           mkdir -p "$STAGING"
           cp src-tauri/target/release/bundle/nsis/*.exe "$STAGING/"
           cp src-tauri/target/release/bundle/nsis/*.sig "$STAGING/"
           cp src-tauri/target/release/bundle/msi/*.msi "$STAGING/"
           cp src-tauri/target/release/bundle/msi/*.sig "$STAGING/"
 
-          aws s3 cp "$STAGING" "s3://$S3_BUCKET/updates/$VERSION/" --recursive --endpoint-url "$S3_ENDPOINT"
-          aws s3 cp latest.json "s3://$S3_BUCKET/updates/latest.json" --endpoint-url "$S3_ENDPOINT"
-          echo "published updates/$VERSION + updates/latest.json to s3://$S3_BUCKET"
-
       - name: Keep installers as workflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: seans-${{ env.VERSION }}-windows
+          path: publish/updates/${{ env.VERSION }}/windows/
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ format('0.1.{0}', github.run_number) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential curl file libfuse2 libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build signed AppImage
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          VERSION="0.1.${{ github.run_number }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          npx tauri build --bundles appimage --config "{\"version\":\"$VERSION\"}"
+
+      - name: Stage Linux release artifacts
+        run: |
+          set -euo pipefail
+          STAGING="publish/updates/$VERSION/linux"
+          mkdir -p "$STAGING"
+          cp src-tauri/target/release/bundle/appimage/*.AppImage "$STAGING/"
+          cp src-tauri/target/release/bundle/appimage/*.AppImage.sig "$STAGING/"
+
+      - name: Keep AppImage as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: seans-${{ env.VERSION }}-linux
+          path: publish/updates/${{ env.VERSION }}/linux/
+          if-no-files-found: error
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [windows, linux]
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.windows.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download signed Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: seans-${{ needs.windows.outputs.version }}-windows
+          path: publish/updates/${{ needs.windows.outputs.version }}/windows
+
+      - name: Download signed Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: seans-${{ needs.linux.outputs.version }}-linux
+          path: publish/updates/${{ needs.linux.outputs.version }}/linux
+
+      - name: Make cross-platform update manifest
+        run: |
+          node scripts/make-update-manifest.mjs \
+            --version "$VERSION" \
+            --bundle-dir "publish/updates/$VERSION" \
+            --base-url "$UPDATE_BASE_URL" \
+            --out latest.json \
+            --notes "Build ${{ github.run_number }} (${{ github.sha }})"
+
+      - name: Preserve existing Windows update URLs
+        run: |
+          set -euo pipefail
+          VERSION_DIR="publish/updates/$VERSION"
+          mv "$VERSION_DIR/windows/"* "$VERSION_DIR/"
+          rmdir "$VERSION_DIR/windows"
+
+      - name: Upload to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.S3_REGION }}
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+        run: |
+          set -euo pipefail
+          aws configure set default.s3.addressing_style path
+          aws configure set default.request_checksum_calculation when_required
+          aws configure set default.response_checksum_validation when_required
+          aws s3 cp "publish/updates/$VERSION" "s3://$S3_BUCKET/updates/$VERSION/" --recursive --endpoint-url "$S3_ENDPOINT"
+          aws s3 cp latest.json "s3://$S3_BUCKET/updates/latest.json" --endpoint-url "$S3_ENDPOINT"
+          echo "published updates/$VERSION + updates/latest.json to s3://$S3_BUCKET"
+
+      - name: Keep release artifacts as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: seans-${{ env.VERSION }}-release
           path: publish/updates/${{ env.VERSION }}/
           if-no-files-found: error

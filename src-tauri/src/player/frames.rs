@@ -143,6 +143,7 @@ pub fn ensure_started() -> Result<String, String> {
     let thread_stop = stop.clone();
     let thread_hub = hub();
     let join = std::thread::spawn(move || accept_loop(listener, thread_hub, thread_stop));
+    println!("[player] frame stream endpoint: http://127.0.0.1:{port}/frames");
 
     if let Ok(mut guard) = server_slot().lock() {
         if let Some(mut old) = guard.take() {

@@ -29,8 +29,6 @@ tauri-plugin-process = "2"
 tauri-plugin-http = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# JWT storage in the Windows Credential Manager (normal crate dependency).
-keyring = { version = "2.3", features = ["platform-windows"] }
 # Open the system browser for web OAuth (no plugin permissions needed).
 open = "5"
 # M7 player: dynamic LoadLibrary of the bundled libmpv-2.dll (local files only).
@@ -50,6 +48,14 @@ windows-sys = { version = "0.59", features = [
 discord-presence = "3.2"
 # Main-window HWND for the mpv host (also available via tauri's window handle).
 raw-window-handle = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+# JWT storage in Windows Credential Manager.
+keyring = { version = "2.3", features = ["platform-windows"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# JWT storage through the desktop Secret Service (GNOME Keyring, KWallet, etc.).
+keyring = { version = "2.3", features = ["linux-secret-service"] }
 
 [profile.release]
 codegen-units = 1

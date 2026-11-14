@@ -1,4 +1,4 @@
-//! Tauri commands for auth (M2): JWT storage in the Windows Credential Manager,
+//! Tauri commands for auth (M2): JWT storage in the OS credential store,
 //! system-browser opening for web OAuth, and a one-shot loopback HTTP acceptor
 //! used as a fallback redirect target when `seans://` is unavailable.
 
@@ -16,7 +16,7 @@ fn keyring_entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).map_err(|e| e.to_string())
 }
 
-/// Store the JWT in the Windows Credential Manager. Never persisted from JS.
+/// Store the JWT in the platform credential store. Never persisted from JS.
 #[tauri::command]
 pub fn save_token(token: String) -> Result<(), String> {
     if token.is_empty() {
@@ -26,7 +26,7 @@ pub fn save_token(token: String) -> Result<(), String> {
     entry.set_password(&token).map_err(|e| e.to_string())
 }
 
-/// Read the JWT from the Credential Manager, or None when absent.
+/// Read the JWT from the platform credential store, or None when absent.
 #[tauri::command]
 pub fn load_token() -> Result<Option<String>, String> {
     let entry = keyring_entry()?;
@@ -37,7 +37,7 @@ pub fn load_token() -> Result<Option<String>, String> {
     }
 }
 
-/// Delete the JWT from the Credential Manager (missing entry is not an error).
+/// Delete the JWT from the platform credential store (missing entry is not an error).
 #[tauri::command]
 pub fn clear_token() -> Result<(), String> {
     let entry = keyring_entry()?;
