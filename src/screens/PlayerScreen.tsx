@@ -17,6 +17,7 @@ import { useProgressiveGuard } from "../features/player/useProgressiveGuard";
 import { useGuardedTransport } from "../features/player/useGuardedTransport";
 import { usePlayerExtensions } from "../features/player/usePlayerExtensions";
 import { PlayerSlotsProvider } from "../features/player/extensions/slots";
+import { setActiveMediaId } from "../features/clips/activeMedia";
 import type { ExtensionRuntime } from "../features/player/extensions/registry";
 import type {
   RoomTransport,
@@ -68,6 +69,13 @@ export function PlayerScreen({
   const intro = useTheIntroDb(fileId);
   const { mediaId, episodeCtx, status: mediaResolve, setEpisodeCtx } =
     useMediaLookup(fileId, intro.context);
+
+  // Capture cloud + best-moments extensions get the media id through the
+  // activeMedia bridge (the frozen extension contract carries none).
+  useEffect(() => {
+    setActiveMediaId(mediaId);
+    return () => setActiveMediaId(null);
+  }, [mediaId]);
 
   const playbackState = usePlayback(mediaId, fileId, {
     enabled: !roomMode,

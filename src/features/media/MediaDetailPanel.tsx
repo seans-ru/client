@@ -13,6 +13,7 @@ import {
 } from "../../design/primitives";
 import { ReleaseList, useMediaReleases } from "../releases";
 import { ReviewForm, ReviewList } from "../reviews";
+import { ClipHighlights } from "./ClipHighlights";
 import { useMediaDetail } from "./useMediaDetail";
 
 function formatUpdatedAt(iso: string): string {
@@ -126,6 +127,8 @@ export function MediaDetailPanel({
           onRefresh={releasesState.refreshFromTrackers}
         />
       </section>
+
+      <ClipHighlights mediaId={mediaId} />
 
       <section className="media-reviews" aria-label="Отзывы">
         <h3>Отзывы</h3>
