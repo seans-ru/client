@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { joinCapturePath } from "./captureHelpers";
+import type { ClipsNative, UploadFileArgs, UploadFileResult } from "../../clips/api";
 import type { Unsubscribe } from "./types";
 
 export type CaptureError = {
@@ -139,5 +140,33 @@ export function createCaptureNative(): CaptureNative {
       invoke<void>("capture_reveal", { path }).catch((error) => {
         throw toCaptureError(error, "reveal-failed");
       }),
+  };
+}
+
+/**
+ * Cloud-side native calls (clips-cloud.md): multipart upload next to the
+ * file, open-a-URL, and an existence probe for local clip playback. Same
+ * structured `CaptureError` rejects as the rest of the capture bridge.
+ */
+export function createClipsNative(): ClipsNative {
+  return {
+    uploadFile: (args: UploadFileArgs): Promise<UploadFileResult> =>
+      invoke<UploadFileResult>("capture_upload_file", {
+        url: args.url,
+        filePath: args.filePath,
+        fieldName: args.fieldName,
+        metaJson: args.metaJson,
+        authHeader: args.authHeader,
+      }).catch((error) => {
+        throw toCaptureError(error, "upload-failed");
+      }),
+
+    openUrl: (url: string) =>
+      invoke<void>("capture_open_url", { url }).catch((error) => {
+        throw toCaptureError(error, "open-failed");
+      }),
+
+    fileExists: (path: string) =>
+      invoke<boolean>("capture_file_exists", { path }).catch(() => false),
   };
 }

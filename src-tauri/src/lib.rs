@@ -111,6 +111,9 @@ pub fn run() {
             capture::capture_default_dir,
             capture::capture_reveal,
             capture::capture_export_clip,
+            capture::capture_upload_file,
+            capture::capture_open_url,
+            capture::capture_file_exists,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Seans")

@@ -196,6 +196,142 @@ pub fn resolve_ffmpeg(app: &AppHandle) -> PathBuf {
     PathBuf::from("ffmpeg")
 }
 
+/* ------------------------------------------- cloud upload (clips-cloud.md) */
+
+/// Result of `capture_upload_file`: raw HTTP status + body for the typed
+/// TS client (src/features/clips/api.ts) to parse.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadOutcome {
+    pub status: u16,
+    pub body: String,
+}
+
+/// Build a `multipart/form-data` body: JSON `meta` part + the file part.
+/// Pure so the framing is unit-testable without a network.
+pub fn build_multipart_body(
+    field_name: &str,
+    filename: &str,
+    meta_json: &str,
+    file_bytes: &[u8],
+    boundary: &str,
+) -> Vec<u8> {
+    let mut body: Vec<u8> = Vec::new();
+    let safe_name = filename.replace('"', "'");
+    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(
+        format!(
+            "Content-Disposition: form-data; name=\"meta\"\r\nContent-Type: application/json\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(meta_json.as_bytes());
+    body.extend_from_slice(b"\r\n");
+    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(
+        format!(
+            "Content-Disposition: form-data; name=\"{field_name}\"; filename=\"{safe_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(file_bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    body
+}
+
+fn run_upload(
+    url: String,
+    file_path: String,
+    field_name: String,
+    meta_json: String,
+    auth_header: Option<String>,
+) -> Result<UploadOutcome, CaptureError> {
+    if url.trim().is_empty() {
+        return Err(CaptureError::new("invalid-url", "нет адреса загрузки"));
+    }
+    let bytes = std::fs::read(&file_path)
+        .map_err(|e| CaptureError::new("read-failed", e.to_string()))?;
+    let filename = Path::new(&file_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "upload.bin".to_string());
+    let boundary = format!(
+        "----seans-capture-{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
+    let body = build_multipart_body(
+        if field_name.trim().is_empty() {
+            "file"
+        } else {
+            &field_name
+        },
+        &filename,
+        &meta_json,
+        &bytes,
+        &boundary,
+    );
+    let mut request = ureq::post(&url).set(
+        "Content-Type",
+        &format!("multipart/form-data; boundary={boundary}"),
+    );
+    if let Some(auth) = auth_header {
+        if !auth.trim().is_empty() {
+            request = request.set("Authorization", &auth);
+        }
+    }
+    match request.send(&body[..]) {
+        Ok(response) => Ok(UploadOutcome {
+            status: response.status(),
+            body: response.into_string().unwrap_or_default(),
+        }),
+        Err(ureq::Error::Status(status, response)) => Ok(UploadOutcome {
+            status,
+            body: response.into_string().unwrap_or_default(),
+        }),
+        Err(ureq::Error::Transport(e)) => {
+            Err(CaptureError::new("upload-failed", e.to_string()))
+        }
+    }
+}
+
+/// Upload a local capture file as `multipart/form-data` (`file` + `meta`).
+/// The bytes never cross the webview IPC — the TS layer gets JSON back.
+#[tauri::command]
+pub async fn capture_upload_file(
+    url: String,
+    file_path: String,
+    field_name: String,
+    meta_json: String,
+    auth_header: Option<String>,
+) -> Result<UploadOutcome, CaptureError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_upload(url, file_path, field_name, meta_json, auth_header)
+    })
+    .await
+    .map_err(|e| CaptureError::new("join-failed", e.to_string()))?
+}
+
+/// Open a share link in the system browser («Поделиться»). Only http(s) —
+/// never a local path/command.
+#[tauri::command]
+pub fn capture_open_url(url: String) -> Result<(), CaptureError> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+        return Err(CaptureError::new("invalid-url", "допустимы только http(s)-ссылки"));
+    }
+    open::that(trimmed).map_err(|e| CaptureError::new("open-failed", e.to_string()))
+}
+
+/// Does the exported clip still exist locally? (best-moments playback picks
+/// the local file first, the cloud copy otherwise).
+#[tauri::command]
+pub fn capture_file_exists(path: String) -> bool {
+    !path.trim().is_empty() && Path::new(&path).is_file()
+}
+
 /// Export the `[start, end]` clip of `source` into `out_path` (issue #14).
 /// Streams `-progress` pings as `capture://export-progress` events.
 #[tauri::command]
@@ -302,7 +438,9 @@ fn run_export(
 
 #[cfg(test)]
 mod tests {
-    use super::{export_args, format_seconds, parse_out_time_ms};
+    use super::{
+        build_multipart_body, export_args, format_seconds, parse_out_time_ms,
+    };
 
     #[test]
     fn export_args_stream_copy_with_faststart_for_mp4() {
@@ -338,5 +476,39 @@ mod tests {
         assert_eq!(parse_out_time_ms("out_time_ms=12500"), None);
         assert_eq!(parse_out_time_ms("frame=42"), None);
         assert_eq!(parse_out_time_ms("out_time=00:00:01"), Some(1000));
+    }
+
+    #[test]
+    fn multipart_body_frames_meta_and_file() {
+        let body = build_multipart_body(
+            "file",
+            "clip.mp4",
+            "{\"media_id\":\"7\"}",
+            b"\x00\x01DATA",
+            "BOUND",
+        );
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("--BOUND\r\n"));
+        assert!(text.contains("name=\"meta\""));
+        assert!(text.contains("{\"media_id\":\"7\"}"));
+        assert!(text.contains("name=\"file\"; filename=\"clip.mp4\""));
+        assert!(text.contains("\r\n--BOUND--\r\n"));
+        // File bytes survive verbatim.
+        assert!(body.windows(6).any(|w| w == b"\x00\x01DATA"));
+    }
+
+    #[test]
+    fn multipart_body_escapes_quotes_in_filename() {
+        let body = build_multipart_body("file", "a\"b.mp4", "{}", b"x", "B");
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("filename=\"a'b.mp4\""));
+    }
+
+    #[test]
+    fn file_exists_false_for_missing_or_empty_path() {
+        assert!(!super::capture_file_exists(String::new()));
+        assert!(!super::capture_file_exists(
+            "Z:/definitely/not/here.mp4".into()
+        ));
     }
 }
