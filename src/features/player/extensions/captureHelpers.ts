@@ -120,12 +120,15 @@ export function setMarkA(marks: ClipMarks, position: number): ClipMarks {
 
 /**
  * Mark the clip end. Clicking «Конец» before «Начало» swaps the marks (the
- * clicked point becomes the start) — no dead-end states while scrubbing.
+ * clicked point becomes the start) — no dead-end states while scrubbing. An
+ * end equal to the start is rejected (kept as-is): `a === b` would be a
+ * zero-length, unexportable range.
  */
 export function setMarkB(marks: ClipMarks, position: number): ClipMarks {
   const b = clampPosition(position);
   if (marks.a == null) return { a: null, b };
-  if (b <= marks.a) return { a: b, b: marks.a };
+  if (b === marks.a) return marks;
+  if (b < marks.a) return { a: b, b: marks.a };
   return { a: marks.a, b };
 }
 
@@ -142,6 +145,14 @@ export function clipDuration(marks: ClipMarks): number | null {
 
 export function isExportable(marks: ClipMarks): boolean {
   return clipDuration(marks) != null;
+}
+
+/**
+ * True while a capture job owns the UI (export / screenshot in flight).
+ * Guard against double-clicks: a second save dialog + a second ffmpeg run.
+ */
+export function isCaptureBusy(status: { kind: string }): boolean {
+  return status.kind === "working" || status.kind === "progress";
 }
 
 /** `33.4 с` under a minute, `1:05` above. */
@@ -164,6 +175,120 @@ export function marksLabel(marks: ClipMarks): string | null {
   return duration != null
     ? `A ${start} → B ${end} · ${formatClipDuration(duration)}`
     : `A ${start} → B ${end}`;
+}
+
+/* ---------------------------------------------------- clip builder (drag) */
+
+/** Shortest sensible clip: below this the range is treated as not grabbed. */
+export const MIN_CLIP_SEC = 0.5;
+
+/**
+ * Clamp a range to `[0, duration]` keeping `a < b`. Incomplete marks stay
+ * incomplete; `duration == null` (unknown) only clamps to ≥ 0.
+ */
+export function clampMarksToDuration(
+  marks: ClipMarks,
+  duration: number | null,
+): ClipMarks {
+  const max =
+    duration != null && Number.isFinite(duration) && duration > 0
+      ? duration
+      : null;
+  let a = marks.a != null ? clampPosition(marks.a) : null;
+  let b = marks.b != null ? clampPosition(marks.b) : null;
+  if (max != null) {
+    if (a != null) a = Math.min(a, max);
+    if (b != null) b = Math.min(b, max);
+  }
+  if (a != null && b != null && b <= a) return { a, b: null };
+  return { a, b };
+}
+
+/**
+ * Drag one handle to `position` (seconds). The other handle stays put when
+ * possible; crossing swaps nothing — the dragged handle stops at
+ * `other ± MIN_CLIP_SEC` so the segment can never collapse or reverse.
+ */
+export function moveHandle(
+  marks: ClipMarks,
+  which: "a" | "b",
+  position: number,
+  duration: number | null,
+): ClipMarks {
+  const target = clampPosition(position);
+  const max =
+    duration != null && Number.isFinite(duration) && duration > 0
+      ? duration
+      : null;
+  if (which === "a") {
+    const limit = marks.b != null ? marks.b - MIN_CLIP_SEC : max;
+    const a =
+      limit != null ? Math.min(target, Math.max(0, limit)) : target;
+    return { a, b: marks.b != null && marks.b > a ? marks.b : null };
+  }
+  const limit = marks.a != null ? marks.a + MIN_CLIP_SEC : 0;
+  const upper = max ?? Number.POSITIVE_INFINITY;
+  const b = Math.min(upper, Math.max(target, limit));
+  // End mark alone (no start yet) is a legal intermediate state.
+  if (marks.a == null) return { a: null, b };
+  return { a: marks.a, b };
+}
+
+/**
+ * Drag the whole segment by `deltaSec`, keeping its length. Stops at the
+ * file edges — the segment is never squashed, only pinned to 0 / duration.
+ */
+export function moveSegment(
+  marks: ClipMarks,
+  deltaSec: number,
+  duration: number | null,
+): ClipMarks {
+  const { a, b } = marks;
+  if (a == null || b == null || b <= a || !Number.isFinite(deltaSec)) {
+    return marks;
+  }
+  const length = b - a;
+  const max =
+    duration != null && Number.isFinite(duration) && duration > 0
+      ? duration
+      : null;
+  let nextA = clampPosition(a + deltaSec);
+  if (max != null) nextA = Math.min(nextA, Math.max(0, max - length));
+  return { a: nextA, b: nextA + length };
+}
+
+/**
+ * Pointer x → seconds on the timeline. Positions outside the track clamp to
+ * the edges; a zero-width track maps to 0.
+ */
+export function timelineSeconds(
+  clientX: number,
+  rectLeft: number,
+  rectWidth: number,
+  duration: number | null,
+): number {
+  const total =
+    duration != null && Number.isFinite(duration) && duration > 0
+      ? duration
+      : 0;
+  if (total <= 0 || !(rectWidth > 0)) return 0;
+  const ratio = (clientX - rectLeft) / rectWidth;
+  return Math.min(total, clampPosition(ratio * total));
+}
+
+/** Preview loop decision at `position` for the selected segment. */
+export type PreviewAction = "stop" | "loop" | null;
+
+export function previewActionAt(
+  position: number,
+  marks: ClipMarks,
+  loop: boolean,
+): PreviewAction {
+  const { a, b } = marks;
+  if (a == null || b == null || b <= a) return "stop";
+  if (position < a) return loop ? "loop" : null;
+  if (position >= b) return loop ? "loop" : "stop";
+  return null;
 }
 
 /** Container chosen by the file extension the user saved to. */
@@ -267,4 +392,44 @@ export const CAPTURE_COPY = {
   formatLabel: "Формат скриншота",
   modeLabel: "Кадр",
   defaultFolderHint: "Изображения/Seans",
+  // Clip builder (issue: один билдер вместо кнопок A/B).
+  clipBuilder: "Клип",
+  clipBuilderTitle: "Создать клип",
+  closeBuilder: "Закрыть",
+  playSegment: "Играть фрагмент",
+  stopSegment: "Стоп",
+  loopSegment: "Повтор",
+  builderHint: "Потяните метки A/B или весь сегмент",
+  durationLabel: "Длительность",
+  // Cloud (clips-cloud.md).
+  cloudSection: "Облако",
+  share: "Поделиться",
+  upload: "Загрузить",
+  uploading: "Загрузка…",
+  uploadPending: "Ожидает загрузки",
+  uploadFailed: "Ошибка загрузки",
+  uploaded: "В облаке",
+  copyLink: "Скопировать ссылку",
+  linkCopied: "Ссылка скопирована",
+  visibility: "Видимость",
+  visibilityClosed: "Закрытый",
+  visibilityByLink: "По ссылке",
+  visibilityOpen: "Открытый",
+  spoiler: "Спойлер",
+  spoilerOn: "Спойлер: включён",
+  spoilerOff: "Спойлер: выключен",
+  cloudListEmpty: "Созданные клипы и скриншоты появятся здесь",
+  mediaUnknown: "Фильм не определён — загрузка недоступна",
+  // Best moments (phase 3).
+  bestMoments: "Лучшие моменты",
+  bestMomentsStart: "Смотреть",
+  bestMomentsSkip: "Пропустить",
+  bestMomentsExit: "Закрыть",
+  bestMomentsEmpty: "Нет подходящих клипов",
 } as const;
+
+/** «Лучшие моменты через 5 с» — countdown line on the post-movie card. */
+export function bestMomentsCountdownLabel(sec: number): string {
+  const s = Math.max(0, Math.round(sec));
+  return `${CAPTURE_COPY.bestMoments} через ${s} с`;
+}

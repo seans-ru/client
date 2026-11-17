@@ -1,22 +1,26 @@
 /**
- * Capture extension (issue #14, recipe §S2.10 in
+ * Capture extension (issue #14 + clip builder rework, recipe §S2.10 in
  * docs/compose/spec/player-extensibility.md).
  *
  * Screenshots: one tap → `ctx.mpv.command(["screenshot-to-file", path, mode])`
  * into the configured folder (default «Изображения/Seans»), PNG / JPEG.
- * Clips: A→B marks set live during playback, export via ffmpeg stream copy
- * (`src-tauri/src/capture.rs`, optional binary). Without ffmpeg — the honest
- * fallback saves the start/end frames through mpv and says so; never a
- * silent failure.
+ * Clips: ONE «Клип» button opens the clip builder over the player — a wide
+ * timeline with draggable A/B handles and a draggable segment, segment
+ * preview (play A→B, optional loop), export via ffmpeg stream copy
+ * (`src-tauri/src/capture.rs`, optional binary) and an honest frames
+ * fallback. Cloud (docs/compose/spec/clips-cloud.md): every export is
+ * auto-uploaded in the background with visibility / spoiler / share controls.
  *
- * UI: `controls.secondary` (screenshot / A / B), `overlay` (clip badge +
- * toasts with actions), `settings.menu` (folder, format, mode). Paths and
- * settings persist in `ctx.storage` (`seans.player.ext.capture.*`).
+ * UI: `controls.secondary` (screenshot / clip builder toggle), `overlay`
+ * (builder + toasts), `settings.menu` (folder, format, mode, cloud list).
+ * Paths and settings persist in `ctx.storage` (`seans.player.ext.capture.*`).
  */
 
 import {
   useEffect,
+  useRef,
   useSyncExternalStore,
+  type PointerEvent as ReactPointerEvent,
   type ReactElement,
 } from "react";
 import type { PlayerSnapshot } from "../playerTypes";
@@ -37,19 +41,26 @@ import {
   exportingLabel,
   exportProgressPercent,
   fallbackFrames,
+  formatClipDuration,
   frameFileName,
+  isCaptureBusy,
   isExportable,
   isNearPosition,
   joinCapturePath,
   marksLabel,
+  MIN_CLIP_SEC,
+  moveHandle,
+  moveSegment,
   parseMpvTime,
   parseSaveDir,
   parseScreenshotFormat,
   parseScreenshotMode,
+  previewActionAt,
   screenshotArgs,
   screenshotFileName,
   setMarkA,
   setMarkB,
+  timelineSeconds,
   SCREENSHOT_FORMATS,
   SCREENSHOT_FORMAT_LABELS,
   SCREENSHOT_MODES,
@@ -60,9 +71,22 @@ import {
 } from "./captureHelpers";
 import {
   createCaptureNative,
+  createClipsNative,
   toCaptureError,
   type CaptureNative,
 } from "./captureNative";
+import {
+  createCloudSync,
+  type CloudSync,
+} from "./captureCloud";
+import {
+  CLIP_VISIBILITIES,
+  CLIP_VISIBILITY_LABELS,
+  formatCloudStatus,
+  shareUrlForCode,
+  type ClipVisibility,
+  type LocalCloudAsset,
+} from "../../clips";
 
 const SAVE_DIR_KEY = "saveDir";
 const FORMAT_KEY = "format";
@@ -184,6 +208,45 @@ export function createStatusStore(): StatusStore {
   };
 }
 
+/** Clip builder mode: open/closed, preview loop flag, preview running. */
+export type ClipModeState = {
+  active: boolean;
+  loop: boolean;
+  previewing: boolean;
+};
+
+export type ClipModeStore = {
+  subscribe(cb: () => void): Unsubscribe;
+  get(): ClipModeState;
+  set(next: Partial<ClipModeState>): void;
+};
+
+export function createClipModeStore(): ClipModeStore {
+  let state: ClipModeState = { active: false, loop: false, previewing: false };
+  const listeners = new Set<() => void>();
+  return {
+    subscribe(cb) {
+      listeners.add(cb);
+      return () => {
+        listeners.delete(cb);
+      };
+    },
+    get: () => state,
+    set(next) {
+      const merged = { ...state, ...next };
+      if (
+        merged.active === state.active &&
+        merged.loop === state.loop &&
+        merged.previewing === state.previewing
+      ) {
+        return;
+      }
+      state = merged;
+      for (const listener of [...listeners]) listener();
+    },
+  };
+}
+
 /* ------------------------------------------------------------ controller */
 
 export type CaptureDeps = {
@@ -194,12 +257,17 @@ export type CaptureDeps = {
   settings: CaptureSettings;
   marks: MarksStore;
   status: StatusStore;
+  /** Cloud sync (clips-cloud.md) — optional so plain capture keeps working. */
+  cloud?: CloudSync;
+  clipMode?: ClipModeStore;
 };
 
 export type CaptureController = {
   settings: CaptureSettings;
   marks: MarksStore;
   status: StatusStore;
+  clipMode: ClipModeStore;
+  cloud: CloudSync | null;
   takeScreenshot(): Promise<void>;
   markStart(): void;
   markEnd(): void;
@@ -209,6 +277,18 @@ export type CaptureController = {
   reveal(path: string): Promise<void>;
   chooseFolder(): Promise<void>;
   openFolder(): Promise<void>;
+  /** Clip builder (phase 1). */
+  enterClipMode(): void;
+  exitClipMode(): void;
+  playSegment(): Promise<void>;
+  stopSegment(): Promise<void>;
+  toggleLoop(): void;
+  dragHandleTo(which: "a" | "b", seconds: number): void;
+  dragSegmentBy(deltaSec: number): void;
+  /** Snapshot tick: stop/loop the segment preview at the edges. */
+  onTick(snapshot: PlayerSnapshot): void;
+  /** Live file duration (0 when unknown) — timeline scaling. */
+  getDuration(): number;
 };
 
 function sleep(ms: number): Promise<void> {
@@ -222,11 +302,16 @@ function sleep(ms: number): Promise<void> {
  */
 export function createCaptureController(deps: CaptureDeps): CaptureController {
   const { settings, marks, status, native } = deps;
+  const clipMode = deps.clipMode ?? createClipModeStore();
+  const cloud = deps.cloud ?? null;
 
   const fail = (error: unknown, prefix: string): void => {
     const err = toCaptureError(error, "capture-failed");
     status.set({ kind: "error", message: `${prefix}: ${err.message}` });
   };
+
+  /** Guard: one capture job at a time (review: double-click double export). */
+  const busy = (): boolean => isCaptureBusy(status.get());
 
   /** Configured folder, falling back to «Изображения/Seans» (then remembered). */
   const resolveDir = async (): Promise<string> => {
@@ -250,11 +335,13 @@ export function createCaptureController(deps: CaptureDeps): CaptureController {
   };
 
   const takeScreenshot = async (): Promise<void> => {
+    if (busy()) return;
     const snapshot = deps.getSnapshot();
     if (!snapshot.file_loaded) {
       status.set({ kind: "error", message: CAPTURE_COPY.noMedia });
       return;
     }
+    status.set({ kind: "working", label: CAPTURE_COPY.screenshot });
     try {
       const dir = await resolveDir();
       const path = joinCapturePath(
@@ -271,12 +358,18 @@ export function createCaptureController(deps: CaptureDeps): CaptureController {
         message: CAPTURE_COPY.screenshotSaved,
         revealPath: path,
       });
+      // Auto-upload in the background (phase 2) — never blocks the save.
+      cloud?.registerScreenshot({
+        localPath: path,
+        atSec: snapshot.position,
+      });
     } catch (error) {
       fail(error, CAPTURE_COPY.screenshotFailed);
     }
   };
 
   const exportClip = async (): Promise<void> => {
+    if (busy()) return;
     const current = marks.get();
     const duration = clipDuration(current);
     if (duration == null) {
@@ -294,6 +387,8 @@ export function createCaptureController(deps: CaptureDeps): CaptureController {
       status.set({ kind: "error", message: CAPTURE_COPY.noMedia });
       return;
     }
+    // Busy from before the dialog: the save dialog must not open twice.
+    status.set({ kind: "working", label: CAPTURE_COPY.exportClip });
     try {
       const dir = await resolveDir();
       const chosen = await native.chooseClipPath(
@@ -301,7 +396,10 @@ export function createCaptureController(deps: CaptureDeps): CaptureController {
         dir,
       );
       // Cancelled dialog — no toast.
-      if (chosen == null) return;
+      if (chosen == null) {
+        status.set({ kind: "idle" });
+        return;
+      }
       const outPath = ensureClipExtension(chosen, "mp4");
       status.set({ kind: "progress", percent: 0 });
       const stopProgress = native.onExportProgress((outTimeMs) => {
@@ -325,6 +423,12 @@ export function createCaptureController(deps: CaptureDeps): CaptureController {
         message: CAPTURE_COPY.exportDone,
         revealPath: outPath,
       });
+      // Auto-upload the fresh clip (phase 2) — never blocks the export.
+      cloud?.registerClip({
+        localPath: outPath,
+        startSec: current.a as number,
+        endSec: current.b as number,
+      });
     } catch (error) {
       const err = toCaptureError(error, "export-failed");
       if (err.code === "ffmpeg-missing") {
@@ -339,6 +443,7 @@ export function createCaptureController(deps: CaptureDeps): CaptureController {
   };
 
   const saveFallbackFrames = async (): Promise<void> => {
+    if (busy()) return;
     const frames = fallbackFrames(marks.get());
     if (frames.length === 0) {
       status.set({ kind: "error", message: CAPTURE_COPY.noRange });
@@ -352,6 +457,9 @@ export function createCaptureController(deps: CaptureDeps): CaptureController {
     try {
       const dir = await resolveDir();
       status.set({ kind: "working", label: "Сохраняем кадры…" });
+      // One stamp for the whole fallback: -a/-b must share a timestamp so
+      // the pair is recognisable (review note).
+      const at = new Date();
       const wasPlaying = !snapshot.pause;
       const origin = snapshot.position;
       if (wasPlaying) await deps.transport.pause();
@@ -363,7 +471,7 @@ export function createCaptureController(deps: CaptureDeps): CaptureController {
           await waitForFrame(frame.at);
           const path = joinCapturePath(
             dir,
-            frameFileName(new Date(), frame.mark, settings.getFormat()),
+            frameFileName(at, frame.mark, settings.getFormat()),
           );
           await deps.mpv
             .command(screenshotArgs(path, settings.getMode()))
@@ -386,10 +494,62 @@ export function createCaptureController(deps: CaptureDeps): CaptureController {
     }
   };
 
+  /* ------------------------------------------------------- clip builder */
+
+  const enterClipMode = (): void => {
+    const snapshot = deps.getSnapshot();
+    if (!snapshot.file_loaded) {
+      status.set({ kind: "error", message: CAPTURE_COPY.noMedia });
+      return;
+    }
+    clipMode.set({ active: true });
+    // Entering the builder seeds the range with the current position so the
+    // handles are grabbable immediately.
+    const position = snapshot.position;
+    if (marks.get().a == null && marks.get().b == null && position > 0) {
+      const seeded = setMarkB(setMarkA(EMPTY_MARKS, position), position + MIN_CLIP_SEC);
+      marks.set(seeded);
+    }
+  };
+
+  const exitClipMode = (): void => {
+    clipMode.set({ active: false, previewing: false });
+  };
+
+  const playSegment = async (): Promise<void> => {
+    const current = marks.get();
+    if (!isExportable(current)) {
+      status.set({ kind: "error", message: CAPTURE_COPY.noRange });
+      return;
+    }
+    clipMode.set({ previewing: true });
+    await deps.transport.seek(current.a as number, { personal: true }).catch(() => {});
+    await deps.transport.play().catch(() => {});
+  };
+
+  const stopSegment = async (): Promise<void> => {
+    clipMode.set({ previewing: false });
+    await deps.transport.pause().catch(() => {});
+  };
+
+  const onTick = (snapshot: PlayerSnapshot): void => {
+    if (!clipMode.get().previewing || !snapshot.file_loaded) return;
+    const action = previewActionAt(snapshot.position, marks.get(), clipMode.get().loop);
+    if (action === "stop") {
+      clipMode.set({ previewing: false });
+      void deps.transport.pause().catch(() => {});
+    } else if (action === "loop") {
+      const a = marks.get().a;
+      if (a != null) void deps.transport.seek(a, { personal: true }).catch(() => {});
+    }
+  };
+
   return {
     settings,
     marks,
     status,
+    clipMode,
+    cloud,
     takeScreenshot,
     markStart() {
       const snapshot = deps.getSnapshot();
@@ -431,6 +591,23 @@ export function createCaptureController(deps: CaptureDeps): CaptureController {
         fail(error, "Не удалось открыть папку");
       }
     },
+    enterClipMode,
+    exitClipMode,
+    playSegment,
+    stopSegment,
+    toggleLoop() {
+      clipMode.set({ loop: !clipMode.get().loop });
+    },
+    dragHandleTo(which, seconds) {
+      const snapshot = deps.getSnapshot();
+      marks.set(moveHandle(marks.get(), which, seconds, snapshot.duration));
+    },
+    dragSegmentBy(deltaSec) {
+      const snapshot = deps.getSnapshot();
+      marks.set(moveSegment(marks.get(), deltaSec, snapshot.duration));
+    },
+    onTick,
+    getDuration: () => deps.getSnapshot().duration,
   };
 }
 
@@ -468,26 +645,12 @@ function CameraIcon(): ReactElement {
   );
 }
 
-function MarkIcon({ letter }: { letter: string }): ReactElement {
+function ClipIcon(): ReactElement {
   return (
     <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-      <path
-        d="M4 3.5h10v11l-5-3-5 3z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-        fill="none"
-      />
-      <text
-        x="9"
-        y="10"
-        textAnchor="middle"
-        fontSize="7.5"
-        fill="currentColor"
-        fontFamily="inherit"
-      >
-        {letter}
-      </text>
+      <circle cx="5" cy="13" r="2.2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+      <circle cx="13" cy="13" r="2.2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+      <path d="M6.6 11.4L13.5 3M11.4 11.4L4.5 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
 }
@@ -499,15 +662,15 @@ function CaptureButtons({
 }: {
   controller: CaptureController;
 }): ReactElement {
-  const marks = useSyncExternalStore(
-    controller.marks.subscribe,
-    controller.marks.get,
+  const clipMode = useSyncExternalStore(
+    controller.clipMode.subscribe,
+    controller.clipMode.get,
   );
   const status = useSyncExternalStore(
     controller.status.subscribe,
     controller.status.get,
   );
-  const busy = status.kind === "working" || status.kind === "progress";
+  const busy = isCaptureBusy(status);
   return (
     <>
       <button
@@ -522,25 +685,184 @@ function CaptureButtons({
       </button>
       <button
         type="button"
-        className={`player-icon-btn${marks.a != null ? " player-icon-btn-active" : ""}`}
-        aria-label={CAPTURE_COPY.markA}
-        title={CAPTURE_COPY.markA}
+        className={`player-icon-btn${clipMode.active ? " player-icon-btn-active" : ""}`}
+        aria-label={CAPTURE_COPY.clipBuilder}
+        title={CAPTURE_COPY.clipBuilderTitle}
         disabled={busy}
-        onClick={controller.markStart}
+        onClick={() =>
+          clipMode.active ? controller.exitClipMode() : controller.enterClipMode()
+        }
       >
-        <MarkIcon letter="A" />
-      </button>
-      <button
-        type="button"
-        className={`player-icon-btn${marks.b != null ? " player-icon-btn-active" : ""}`}
-        aria-label={CAPTURE_COPY.markB}
-        title={CAPTURE_COPY.markB}
-        disabled={busy}
-        onClick={controller.markEnd}
-      >
-        <MarkIcon letter="B" />
+        <ClipIcon />
       </button>
     </>
+  );
+}
+
+type DragState = {
+  kind: "a" | "b" | "segment";
+  startX: number;
+  startA: number | null;
+  startB: number | null;
+};
+
+function ClipBuilderPanel({
+  controller,
+}: {
+  controller: CaptureController;
+}): ReactElement {
+  const marks = useSyncExternalStore(
+    controller.marks.subscribe,
+    controller.marks.get,
+  );
+  const clipMode = useSyncExternalStore(
+    controller.clipMode.subscribe,
+    controller.clipMode.get,
+  );
+  const status = useSyncExternalStore(
+    controller.status.subscribe,
+    controller.status.get,
+  );
+  const dragRef = useRef<DragState | null>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
+
+  const secondsAt = (clientX: number): number => {
+    const track = trackRef.current;
+    if (!track) return 0;
+    const rect = track.getBoundingClientRect();
+    return timelineSeconds(clientX, rect.left, rect.width, controller.getDuration());
+  };
+
+  const beginDrag = (
+    kind: DragState["kind"],
+    event: ReactPointerEvent,
+  ): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    (event.target as Element).setPointerCapture?.(event.pointerId);
+    dragRef.current = {
+      kind,
+      startX: event.clientX,
+      startA: marks.a,
+      startB: marks.b,
+    };
+    if (kind !== "segment") {
+      controller.dragHandleTo(kind, secondsAt(event.clientX));
+    }
+  };
+
+  const onMove = (event: ReactPointerEvent): void => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const track = trackRef.current;
+    if (!track) return;
+    const rect = track.getBoundingClientRect();
+    const fileDuration = controller.getDuration();
+    const secPerPx = rect.width > 0 && fileDuration > 0 ? fileDuration / rect.width : 0;
+    if (drag.kind === "segment") {
+      controller.dragSegmentBy((event.clientX - drag.startX) * secPerPx);
+    } else {
+      controller.dragHandleTo(drag.kind, secondsAt(event.clientX));
+    }
+  };
+
+  const endDrag = (event: ReactPointerEvent): void => {
+    (event.target as Element).releasePointerCapture?.(event.pointerId);
+    dragRef.current = null;
+  };
+
+  const total = controller.getDuration() > 0 ? controller.getDuration() : 1;
+  const aPct = marks.a != null ? Math.min(100, Math.max(0, (marks.a / total) * 100)) : 0;
+  const bPct = marks.b != null ? Math.min(100, Math.max(0, (marks.b / total) * 100)) : 100;
+  const durationLabel = clipDuration(marks);
+
+  return (
+    <div className="player-clip-builder" role="group" aria-label={CAPTURE_COPY.clipBuilder}>
+      <div className="player-clip-builder-head">
+        <span className="player-capture-marks-label">
+          {marksLabel(marks) ?? CAPTURE_COPY.builderHint}
+        </span>
+        <span className="player-clip-duration">
+          {CAPTURE_COPY.durationLabel}:{" "}
+          {durationLabel != null ? formatClipDuration(durationLabel) : "—"}
+        </span>
+      </div>
+      <div
+        ref={trackRef}
+        className="player-clip-track"
+        onPointerMove={onMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      >
+        <div
+          className="player-clip-segment"
+          style={{ left: `${aPct}%`, width: `${Math.max(0, bPct - aPct)}%` }}
+          onPointerDown={(event) => beginDrag("segment", event)}
+          title={CAPTURE_COPY.builderHint}
+        />
+        <button
+          type="button"
+          className="player-clip-handle player-clip-handle-a"
+          style={{ left: `${aPct}%` }}
+          aria-label={CAPTURE_COPY.markA}
+          onPointerDown={(event) => beginDrag("a", event)}
+        >
+          A
+        </button>
+        <button
+          type="button"
+          className="player-clip-handle player-clip-handle-b"
+          style={{ left: `${bPct}%` }}
+          aria-label={CAPTURE_COPY.markB}
+          onPointerDown={(event) => beginDrag("b", event)}
+        >
+          B
+        </button>
+      </div>
+      <div className="player-clip-actions">
+        <button
+          type="button"
+          className="player-capture-action"
+          disabled={!isExportable(marks)}
+          onClick={() =>
+            clipMode.previewing ? void controller.stopSegment() : void controller.playSegment()
+          }
+        >
+          {clipMode.previewing ? CAPTURE_COPY.stopSegment : CAPTURE_COPY.playSegment}
+        </button>
+        <button
+          type="button"
+          role="menuitemcheckbox"
+          aria-checked={clipMode.loop}
+          className={`player-capture-action${clipMode.loop ? " player-icon-btn-active" : ""}`}
+          onClick={controller.toggleLoop}
+        >
+          {CAPTURE_COPY.loopSegment}
+        </button>
+        <button
+          type="button"
+          className="player-capture-action"
+          disabled={!isExportable(marks) || isCaptureBusy(status)}
+          onClick={controller.exportClip}
+        >
+          {CAPTURE_COPY.exportClip}
+        </button>
+        <button
+          type="button"
+          className="player-capture-action"
+          onClick={controller.clearClip}
+        >
+          {CAPTURE_COPY.clearMarks}
+        </button>
+        <button
+          type="button"
+          className="player-capture-action"
+          onClick={controller.exitClipMode}
+        >
+          {CAPTURE_COPY.closeBuilder}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -552,9 +874,9 @@ function CaptureOverlay({
 }: {
   controller: CaptureController;
 }): ReactElement | null {
-  const marks = useSyncExternalStore(
-    controller.marks.subscribe,
-    controller.marks.get,
+  const clipMode = useSyncExternalStore(
+    controller.clipMode.subscribe,
+    controller.clipMode.get,
   );
   const status = useSyncExternalStore(
     controller.status.subscribe,
@@ -570,35 +892,11 @@ function CaptureOverlay({
     return () => clearTimeout(timer);
   }, [controller, status]);
 
-  const label = marksLabel(marks);
-  if (!label && status.kind === "idle") return null;
+  if (!clipMode.active && status.kind === "idle") return null;
 
   return (
     <>
-      {label ? (
-        <div className="player-capture-marks" role="status">
-          <span className="player-capture-marks-label">{label}</span>
-          <button
-            type="button"
-            className="player-capture-action"
-            disabled={
-              !isExportable(marks) ||
-              status.kind === "working" ||
-              status.kind === "progress"
-            }
-            onClick={controller.exportClip}
-          >
-            {CAPTURE_COPY.exportClip}
-          </button>
-          <button
-            type="button"
-            className="player-capture-action"
-            onClick={controller.clearClip}
-          >
-            {CAPTURE_COPY.clearMarks}
-          </button>
-        </div>
-      ) : null}
+      {clipMode.active ? <ClipBuilderPanel controller={controller} /> : null}
 
       {status.kind !== "idle" ? (
         <div
@@ -638,6 +936,75 @@ function CaptureOverlay({
   );
 }
 
+function CloudAssetRow({
+  asset,
+  controller,
+}: {
+  asset: LocalCloudAsset;
+  controller: CaptureController;
+}): ReactElement {
+  const cloud = controller.cloud;
+  return (
+    <div className="player-menu-list">
+      <div className="player-menu-item" title={asset.localPath ?? undefined}>
+        <span>
+          {asset.kind === "clip" ? "Клип" : "Скриншот"} ·{" "}
+          {formatCloudStatus(asset.status, asset.error)}
+        </span>
+        <span className="player-menu-row">
+          {CLIP_VISIBILITIES.map((visibility: ClipVisibility) => (
+            <button
+              key={visibility}
+              type="button"
+              role="menuitemradio"
+              aria-checked={asset.visibility === visibility}
+              className={`player-chip${asset.visibility === visibility ? " player-chip-active" : ""}`}
+              disabled={!cloud}
+              onClick={() => void cloud?.setVisibility(asset.localId, visibility)}
+            >
+              {CLIP_VISIBILITY_LABELS[visibility]}
+            </button>
+          ))}
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={asset.spoiler}
+            className={`player-chip${asset.spoiler ? " player-chip-active" : ""}`}
+            disabled={!cloud}
+            onClick={() => void cloud?.setSpoiler(asset.localId, !asset.spoiler)}
+          >
+            {asset.spoiler ? CAPTURE_COPY.spoilerOn : CAPTURE_COPY.spoilerOff}
+          </button>
+          {asset.status !== "uploaded" ? (
+            <button
+              type="button"
+              className="player-chip"
+              disabled={!cloud || asset.status === "uploading"}
+              onClick={() => void cloud?.upload(asset.localId)}
+            >
+              {asset.status === "uploading"
+                ? CAPTURE_COPY.uploading
+                : CAPTURE_COPY.upload}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="player-chip"
+              disabled={!cloud}
+              onClick={() => void cloud?.share(asset.localId)}
+            >
+              {CAPTURE_COPY.share}
+            </button>
+          )}
+        </span>
+      </div>
+      {asset.code ? (
+        <div className="player-capture-path">{shareUrlForCode(asset.code)}</div>
+      ) : null}
+    </div>
+  );
+}
+
 function CaptureSettingsSection({
   controller,
 }: {
@@ -647,6 +1014,10 @@ function CaptureSettingsSection({
   const saveDir = useSyncExternalStore(settings.subscribe, settings.getSaveDir);
   const format = useSyncExternalStore(settings.subscribe, settings.getFormat);
   const mode = useSyncExternalStore(settings.subscribe, settings.getMode);
+  const cloudAssets = useSyncExternalStore(
+    (cb) => (controller.cloud ? controller.cloud.subscribe(cb) : () => {}),
+    () => (controller.cloud ? controller.cloud.list() : EMPTY_ASSETS),
+  );
   return (
     <section>
       <h4 className="player-menu-title">{CAPTURE_COPY.section}</h4>
@@ -708,9 +1079,19 @@ function CaptureSettingsSection({
           <span className="player-menu-item-label">{CAPTURE_COPY.openFolder}</span>
         </button>
       </div>
+      <h4 className="player-menu-title">{CAPTURE_COPY.cloudSection}</h4>
+      {cloudAssets.length === 0 ? (
+        <p className="player-menu-empty">{CAPTURE_COPY.cloudListEmpty}</p>
+      ) : (
+        cloudAssets.map((asset) => (
+          <CloudAssetRow key={asset.localId} asset={asset} controller={controller} />
+        ))
+      )}
     </section>
   );
 }
+
+const EMPTY_ASSETS: LocalCloudAsset[] = [];
 
 /* ------------------------------------------------------------- extension */
 
@@ -721,6 +1102,10 @@ export const capture: PlayerExtension = {
     const settings = createCaptureSettings(ctx.storage);
     const marks = createMarksStore();
     const status = createStatusStore();
+    const clipMode = createClipModeStore();
+    // Cloud layer (phase 2): real native bridge in the desktop shell; the
+    // upload failures degrade to «Ожидает загрузки» and never break capture.
+    const cloud = createCloudSync({ native: createClipsNative() });
     const controller = createCaptureController({
       getSnapshot: ctx.getSnapshot,
       transport: ctx.transport,
@@ -729,14 +1114,18 @@ export const capture: PlayerExtension = {
       settings,
       marks,
       status,
+      cloud,
+      clipMode,
     });
     // A new file invalidates marks taken from the previous one.
     const reset = () => {
       marks.set(clearMarks());
       status.set({ kind: "idle" });
+      clipMode.set({ active: false, previewing: false });
     };
     const stopOpen = ctx.onOpen(reset);
     const stopClose = ctx.onClose(reset);
+    const stopTick = ctx.onSnapshot((snapshot) => controller.onTick(snapshot));
     const stopButtons = ctx.ui.add("controls.secondary", () => (
       <CaptureButtons controller={controller} />
     ));
@@ -752,6 +1141,7 @@ export const capture: PlayerExtension = {
       stopMenu();
       stopOpen();
       stopClose();
+      stopTick();
     };
   },
 };
